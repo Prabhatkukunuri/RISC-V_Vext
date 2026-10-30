@@ -1,0 +1,10 @@
+<RCC>
+    <qresource prefix="/circuit_designs">
+        <file>SSE.json</file>
+        <file>NH_F_Processor.json</file>
+        <file>H_F_Processor.json</file>
+        <file>H_NF_Processor.json</file>
+        <file>NH_NF_Processor.json</file>
+        <file>single_cycle_draft1.json</file>
+    </qresource>
+</RCC>

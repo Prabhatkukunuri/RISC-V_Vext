@@ -1,0 +1,34 @@
+#ifndef PROCESSOR_DIALOG_H
+#define PROCESSOR_DIALOG_H
+
+#include "processor/processor_types.h"
+#include <QDialog>
+#include <QTreeWidgetItem>
+
+namespace Kites
+{
+namespace Ui
+{
+class ProcessorDialog;
+}
+
+class ProcessorDialog : public QDialog
+{
+    Q_OBJECT
+
+  public:
+    explicit ProcessorDialog(QWidget *parent = nullptr, const ProcessorType &currentVMType = ProcessorType::RVSS);
+    ~ProcessorDialog();
+
+  private:
+    Ui::ProcessorDialog *ui;
+    QTreeWidgetItem *m_currentSelectedItem = nullptr;
+  private slots:
+    void on_buttonBox_accepted();
+    // void on_treeWidget_currentItemChanged(QTreeWidgetItem *current, QTreeWidgetItem *previous);
+
+  signals:
+    void vmSelected(const ProcessorType &vmType);
+};
+} // namespace Kites
+#endif // PROCESSOR_DIALOG_H
