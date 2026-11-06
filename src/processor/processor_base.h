@@ -48,9 +48,12 @@ enum SyscallCode
 struct RegisterChange
 {
     unsigned int reg_index;
-    unsigned int reg_type; // 0 for GPR, 1 for CSR, 2 for FPR
+    unsigned int reg_type; // 0 for GPR, 1 for CSR, 2 for FPR, 3 for vector register
     uint64_t old_value;
     uint64_t new_value;
+    // Vector registers (reg_type 3) are VLEN/8 bytes, so they are stored whole here instead.
+    std::vector<uint8_t> old_bytes{};
+    std::vector<uint8_t> new_bytes{};
 };
 
 struct MemoryChange

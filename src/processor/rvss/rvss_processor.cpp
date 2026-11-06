@@ -20,7 +20,9 @@
 #include <iostream>
 #include <mutex>
 #include <queue>
+#include <sstream>
 #include <stack>
+#include <stdexcept>
 #include <thread>
 #include <tuple>
 
@@ -1008,6 +1010,18 @@ void RVSSProcessor::WriteBackCsr()
     uint64_t old_gpr = registers_.ReadGpr(rd);
     uint64_t old_csr = registers_.ReadCsr(csr_target_address_);
 
+    // CSRRW/CSRRWI always write; the set/clear forms write only when rs1/uimm is non-zero.
+    bool writes_csr = (funct3 == 0b001 || funct3 == 0b101) ||
+                      ((funct3 == 0b010 || funct3 == 0b011) && csr_write_val_ != 0) ||
+                      ((funct3 == 0b110 || funct3 == 0b111) && csr_uimm_ != 0);
+    if (writes_csr && IsReadOnlyCsr(csr_target_address_))
+    {
+        std::ostringstream message;
+        message << "Illegal instruction: write to read-only CSR 0x" << std::hex
+                << csr_target_address_;
+        throw std::runtime_error(message.str());
+    }
+
     switch (funct3)
     {
     case 0b001:
@@ -1213,6 +1227,11 @@ void RVSSProcessor::Undo()
             registers_.WriteFpr(change.reg_index, change.old_value);
             break;
         }
+        case 3:
+        { // Vector register
+            registers_.WriteVectorRegister(change.reg_index, change.old_bytes);
+            break;
+        }
         default:
             std::cerr << "Invalid register type: " << change.reg_type << std::endl;
             break;
@@ -1283,6 +1302,11 @@ void RVSSProcessor::Redo()
         case 2:
         { // FPR
             registers_.WriteFpr(change.reg_index, change.new_value);
+            break;
+        }
+        case 3:
+        { // Vector register
+            registers_.WriteVectorRegister(change.reg_index, change.new_bytes);
             break;
         }
         default:

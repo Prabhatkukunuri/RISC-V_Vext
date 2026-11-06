@@ -5,10 +5,13 @@
  */
 
 #include "processor/registers.h"
+#include "config/config.h"
 #include <QDebug>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -17,6 +20,8 @@ namespace Kites
 {
 RegisterFile::RegisterFile(QObject *parent) : QObject(parent)
 {
+    // VMs only reset their registers from their own Reset(), so size the vector file here too.
+    Reset();
 }
 
 void RegisterFile::Reset()
@@ -25,6 +30,12 @@ void RegisterFile::Reset()
     fpr_.fill(0.0);
     csr_.fill(0);
     csr_[0x002] = 0b000; // Default: RNE (IEEE 754)
+
+    m_vlenBytes = vm_config::config.getVlen() / 8;
+    m_vectorRegisters.assign(NUM_VR * m_vlenBytes, 0);
+    // vill set until the first vsetvl*, as on Spike: vector instructions before it are illegal.
+    csr_[CSR_VTYPE] = VTYPE_VILL;
+    csr_[CSR_VLENB] = m_vlenBytes;
     emit registerResetSignal();
 }
 
@@ -87,6 +98,78 @@ std::vector<uint64_t> RegisterFile::GetFprValues() const
     return {fpr_.begin(), fpr_.end()};
 }
 
+size_t RegisterFile::GetVlenBytes() const
+{
+    return m_vlenBytes;
+}
+
+void RegisterFile::CheckVectorElement(size_t reg, size_t index, size_t sew) const
+{
+    if (sew != 8 && sew != 16 && sew != 32 && sew != 64)
+        throw std::invalid_argument("Invalid SEW: " + std::to_string(sew));
+    if (reg >= NUM_VR || reg * m_vlenBytes + (index + 1) * (sew / 8) > m_vectorRegisters.size())
+        throw std::out_of_range("Invalid vector register element");
+}
+
+uint64_t RegisterFile::ReadVectorElement(size_t reg, size_t index, size_t sew) const
+{
+    CheckVectorElement(reg, index, sew);
+    size_t offset = reg * m_vlenBytes + index * (sew / 8);
+    uint64_t value = 0;
+    for (size_t i = 0; i < sew / 8; ++i)
+    {
+        value |= static_cast<uint64_t>(m_vectorRegisters[offset + i]) << (8 * i);
+    }
+    return value;
+}
+
+void RegisterFile::WriteVectorElement(size_t reg, size_t index, size_t sew, uint64_t value)
+{
+    CheckVectorElement(reg, index, sew);
+    size_t offset = reg * m_vlenBytes + index * (sew / 8);
+    for (size_t i = 0; i < sew / 8; ++i)
+    {
+        m_vectorRegisters[offset + i] = static_cast<uint8_t>(value >> (8 * i));
+    }
+    emit updateVRegister(reg + index * (sew / 8) / m_vlenBytes);
+}
+
+bool RegisterFile::ReadMaskBit(size_t reg, size_t index) const
+{
+    if (reg >= NUM_VR || index >= m_vlenBytes * 8)
+        throw std::out_of_range("Invalid mask bit");
+    return (m_vectorRegisters[reg * m_vlenBytes + index / 8] >> (index % 8)) & 1;
+}
+
+void RegisterFile::WriteMaskBit(size_t reg, size_t index, bool value)
+{
+    if (reg >= NUM_VR || index >= m_vlenBytes * 8)
+        throw std::out_of_range("Invalid mask bit");
+    uint8_t &byte = m_vectorRegisters[reg * m_vlenBytes + index / 8];
+    uint8_t bit = static_cast<uint8_t>(1u << (index % 8));
+    byte = value ? (byte | bit) : (byte & ~bit);
+    emit updateVRegister(reg);
+}
+
+std::vector<uint8_t> RegisterFile::ReadVectorRegister(size_t reg) const
+{
+    if (reg >= NUM_VR)
+        throw std::out_of_range("Invalid vector register index");
+    auto begin = m_vectorRegisters.begin() + static_cast<std::ptrdiff_t>(reg * m_vlenBytes);
+    return {begin, begin + static_cast<std::ptrdiff_t>(m_vlenBytes)};
+}
+
+void RegisterFile::WriteVectorRegister(size_t reg, const std::vector<uint8_t> &bytes)
+{
+    if (reg >= NUM_VR)
+        throw std::out_of_range("Invalid vector register index");
+    if (bytes.size() != m_vlenBytes)
+        throw std::invalid_argument("Vector register write must be VLEN/8 bytes");
+    std::copy(bytes.begin(), bytes.end(),
+              m_vectorRegisters.begin() + static_cast<std::ptrdiff_t>(reg * m_vlenBytes));
+    emit updateVRegister(reg);
+}
+
 void RegisterFile::ModifyRegister(const std::string &reg_name, uint64_t value)
 {
     std::string reg_name_n = reg_alias_to_name.at(reg_name);
@@ -130,12 +213,27 @@ const std::unordered_set<std::string> valid_floating_point_registers = {
     "ft24", "ft25", "ft26", "ft27", "ft28", "ft29", "ft30", "ft31",
 };
 
-const std::unordered_set<std::string> valid_csr_registers = {"fflags", "frm", "fcsr"};
+const std::unordered_set<std::string> valid_vector_registers = {
+    "v0",  "v1",  "v2",  "v3",  "v4",  "v5",  "v6",  "v7",  "v8",  "v9",  "v10",
+    "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21",
+    "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31",
+};
+
+const std::unordered_set<std::string> valid_csr_registers = {
+    "fflags", "frm", "fcsr", "vstart", "vxsat", "vxrm", "vcsr", "vl", "vtype", "vlenb",
+};
 
 const std::unordered_map<std::string, int> csr_to_address{
     {"fflags", 0x001},
     {"frm", 0x002},
     {"fcsr", 0x003},
+    {"vstart", RegisterFile::CSR_VSTART},
+    {"vxsat", RegisterFile::CSR_VXSAT},
+    {"vxrm", RegisterFile::CSR_VXRM},
+    {"vcsr", RegisterFile::CSR_VCSR},
+    {"vl", RegisterFile::CSR_VL},
+    {"vtype", RegisterFile::CSR_VTYPE},
+    {"vlenb", RegisterFile::CSR_VLENB},
 };
 
 const std::unordered_map<std::string, std::string> reg_alias_to_name = {
@@ -173,6 +271,9 @@ const std::unordered_map<std::string, std::string> reg_alias_to_name = {
 
     {"fflags", "fflags"}, {"frm", "frm"},  {"fcsr", "fcsr"},
 
+    {"vstart", "vstart"}, {"vxsat", "vxsat"}, {"vxrm", "vxrm"}, {"vcsr", "vcsr"},
+    {"vl", "vl"},         {"vtype", "vtype"}, {"vlenb", "vlenb"},
+
 };
 
 bool IsValidGeneralPurposeRegister(const std::string &reg)
@@ -188,5 +289,15 @@ bool IsValidFloatingPointRegister(const std::string &reg)
 bool IsValidCsr(const std::string &reg)
 {
     return valid_csr_registers.find(reg) != valid_csr_registers.end();
+}
+
+bool IsValidVectorRegister(const std::string &reg)
+{
+    return valid_vector_registers.find(reg) != valid_vector_registers.end();
+}
+
+bool IsReadOnlyCsr(size_t csr_address)
+{
+    return ((csr_address >> 10) & 0b11) == 0b11;
 }
 }//namespace Kites

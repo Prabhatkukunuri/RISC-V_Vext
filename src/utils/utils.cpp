@@ -271,20 +271,28 @@ void DumpRegisters(const std::filesystem::path &filename, RegisterFile &register
         }
         file << "\n";
     }
-    file << "    }\n";
-    // file << "    },\n";
+    file << "    },\n";
 
-    // file << "    \"vec_registers\": {\n";
-    // for (size_t i = 0; i < gp_registers.size(); ++i) {
-    //     file << "        \"x" << i << "\": \"0x"
-    //          << std::hex << std::setw(16) << std::setfill('0') << gp_registers[i] << std::setw(0)
-    //          << std::dec << "\"";
-    //     if (i != gp_registers.size() - 1) {
-    //         file << ",";
-    //     }
-    //     file << "\n";
-    // }
-    // file << "    }\n";
+    // Each vector register is VLEN bits, printed most-significant byte first like Spike does.
+    file << "    \"vec_registers\": {\n";
+    for (size_t i = 0; i < RegisterFile::NUM_VR; ++i)
+    {
+        std::vector<uint8_t> bytes = register_file.ReadVectorRegister(i);
+        file << "        \"v" << i << "\"";
+        file << std::string((i >= 10 ? 0 : 1), ' ');
+        file << ": \"0x" << std::hex << std::setfill('0');
+        for (auto it = bytes.rbegin(); it != bytes.rend(); ++it)
+        {
+            file << std::setw(2) << static_cast<unsigned>(*it);
+        }
+        file << std::setw(0) << std::setfill(' ') << std::dec << "\"";
+        if (i != RegisterFile::NUM_VR - 1)
+        {
+            file << ",";
+        }
+        file << "\n";
+    }
+    file << "    }\n";
 
     file << "}\n";
 

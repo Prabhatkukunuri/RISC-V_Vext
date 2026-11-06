@@ -33,7 +33,32 @@ class RegisterFile : public QObject
 
     std::array<uint64_t, NUM_CSR> csr_ = {}; ///< Array for storing CSR values.
 
+    /**
+     * @brief Vector register file (v0-v31) as one flat byte array, VLEN/8 bytes per register.
+     *
+     * Element i of width SEW in vN lives at byte N * VLEN/8 + i * SEW/8, little-endian, so a
+     * register group (LMUL > 1) is just a longer run of the same array.
+     */
+    std::vector<uint8_t> m_vectorRegisters;
+    size_t m_vlenBytes = 0; ///< VLEN/8, latched from the VM config on Reset().
+
+    void CheckVectorElement(size_t reg, size_t index, size_t sew) const;
+
   public:
+    static constexpr size_t NUM_VR = 32; ///< Number of vector registers.
+
+    /// Vector CSR addresses (RVV 1.0 spec, section 3).
+    static constexpr size_t CSR_VSTART = 0x008;
+    static constexpr size_t CSR_VXSAT = 0x009;
+    static constexpr size_t CSR_VXRM = 0x00A;
+    static constexpr size_t CSR_VCSR = 0x00F;
+    static constexpr size_t CSR_VL = 0xC20;
+    static constexpr size_t CSR_VTYPE = 0xC21;
+    static constexpr size_t CSR_VLENB = 0xC22;
+
+    /// vtype.vill: set when the requested vtype is unsupported (bit XLEN-1).
+    static constexpr uint64_t VTYPE_VILL = 1ULL << 63;
+
     /**
      * @brief Enum representing the type of a register.
      */
@@ -95,13 +120,61 @@ class RegisterFile : public QObject
      */
     [[nodiscard]] std::vector<uint64_t> GetFprValues() const;
 
+    /**
+     * @brief Returns VLEN/8, the size of one vector register in bytes.
+     */
+    [[nodiscard]] size_t GetVlenBytes() const;
+
+    /**
+     * @brief Reads element @p index of width @p sew bits (8, 16, 32 or 64) from vector register
+     * @p reg, zero-extended to 64 bits. An index past the end of @p reg continues into the next
+     * registers, so LMUL > 1 groups work without a separate accessor.
+     */
+    [[nodiscard]] uint64_t ReadVectorElement(size_t reg, size_t index, size_t sew) const;
+
+    /**
+     * @brief Writes the low @p sew bits of @p value to element @p index of vector register @p reg.
+     */
+    void WriteVectorElement(size_t reg, size_t index, size_t sew, uint64_t value);
+
+    /**
+     * @brief Reads mask bit @p index of vector register @p reg (bit i is element i's mask).
+     */
+    [[nodiscard]] bool ReadMaskBit(size_t reg, size_t index) const;
+
+    /**
+     * @brief Writes mask bit @p index of vector register @p reg, leaving the other bits alone.
+     */
+    void WriteMaskBit(size_t reg, size_t index, bool value);
+
+    /**
+     * @brief Returns the VLEN/8 bytes of vector register @p reg, byte 0 first.
+     */
+    [[nodiscard]] std::vector<uint8_t> ReadVectorRegister(size_t reg) const;
+
+    /**
+     * @brief Overwrites vector register @p reg; @p bytes must be exactly VLEN/8 bytes long.
+     */
+    void WriteVectorRegister(size_t reg, const std::vector<uint8_t> &bytes);
+
     void ModifyRegister(const std::string &reg_name, uint64_t value);
 
   signals:
     void updateRegister(size_t regIndex, uint64_t value);
     void updateFRegister(size_t regIndex, uint64_t value);
+    void updateVRegister(size_t regIndex);
     void registerResetSignal();
 };
+
+extern const std::unordered_set<std::string> valid_vector_registers;
+
+/**
+ * @brief True for CSRs that the CSR instructions may not write: address bits [11:10] == 0b11,
+ * which includes vl, vtype and vlenb.
+ */
+bool IsReadOnlyCsr(size_t csr_address);
+
+bool IsValidVectorRegister(const std::string &reg);
 
 extern const std::unordered_set<std::string> valid_general_purpose_registers;
 

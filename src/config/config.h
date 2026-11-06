@@ -37,6 +37,7 @@ struct VmConfig
     uint64_t data_section_start = 0x10000000;  // Default start address for data section
     uint64_t text_section_start = 0x0;         // Default start address for text section
     uint64_t bss_section_start = 0x11000000;   // Default start address for BSS section
+    uint64_t vlen = 128;                       // Vector register width in bits (VLEN)
 
     void setVmType(const VmTypes &type)
     {
@@ -101,6 +102,23 @@ struct VmConfig
         return bss_section_start;
     }
 
+    // Zve64x needs VLEN >= ELEN = 64; RVV caps VLEN at 65536. It must be a power of two.
+    // Takes effect on the next register file Reset().
+    void setVlen(uint64_t bits)
+    {
+        if (bits < 64 || bits > 65536 || (bits & (bits - 1)) != 0)
+        {
+            throw std::invalid_argument("VLEN must be a power of two in [64, 65536]: " +
+                                        std::to_string(bits));
+        }
+        vlen = bits;
+    }
+
+    uint64_t getVlen() const
+    {
+        return vlen;
+    }
+
     void modifyConfig(const std::string &section, const std::string &key, const std::string &value)
     {
         if (section == "Execution")
@@ -123,6 +141,10 @@ struct VmConfig
             else if (key == "run_step_delay")
             {
                 setRunStepDelay(std::stoull(value));
+            }
+            else if (key == "vlen")
+            {
+                setVlen(std::stoull(value));
             }
             else
             {

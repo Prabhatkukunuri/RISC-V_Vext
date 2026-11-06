@@ -852,6 +852,9 @@ void RV5StageVM_Base::Undo()
         case 2:
             registers_.WriteFpr(change.reg_index, change.old_value);
             break;
+        case 3:
+            registers_.WriteVectorRegister(change.reg_index, change.old_bytes);
+            break;
         default:
             break;
         }
@@ -914,6 +917,9 @@ void RV5StageVM_Base::Redo()
             break;
         case 2:
             registers_.WriteFpr(change.reg_index, change.new_value);
+            break;
+        case 3:
+            registers_.WriteVectorRegister(change.reg_index, change.new_bytes);
             break;
         default:
             break;
