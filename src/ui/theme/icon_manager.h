@@ -22,6 +22,7 @@ enum class Icon
     Cache,
     Compiler,
     Profiler,
+    Vector,
     Open,
     Save,
     Settings,

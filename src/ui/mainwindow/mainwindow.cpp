@@ -12,6 +12,7 @@
 #include "ui/memory_tab/memorytab.h"
 #include "ui/processor_tab/processortab.h"
 #include "ui/profiler_tab/profilertab.h"
+#include "ui/vector_tab/vectortab.h"
 #include "ui/theme/icon_manager.h"
 #include "ui_mainwindow.h"
 #include "utils/utils.h"
@@ -269,6 +270,7 @@ void MainWindow::setUpSidebar()
     m_sidebar->addItem(new QListWidgetItem(iconManager.getIcon(Icon::Cache), "Cache"));
     m_sidebar->addItem(new QListWidgetItem(iconManager.getIcon(Icon::Compiler), "Compiler"));
     m_sidebar->addItem(new QListWidgetItem(iconManager.getIcon(Icon::Profiler), "Profiler"));
+    m_sidebar->addItem(new QListWidgetItem(iconManager.getIcon(Icon::Vector), "Vector"));
     m_sidebar->setIconSize(QSize(20, 20));
     m_sidebar->setMinimumWidth(48);
     m_sidebar->setCurrentRow(0);
@@ -397,6 +399,7 @@ void MainWindow::setUpTabs()
     m_tabs[TabIndex::CacheTabIndex]     = new CacheTab(this, m_processorManager->getMemoryController());
     m_tabs[TabIndex::CompilerTabIndex]  = new CompilerTab(this);
     m_tabs[TabIndex::ProfilerTabIndex]  = new ProfilerTab(this, m_processorManager->getProfiler());
+    m_tabs[TabIndex::VectorTabIndex]    = new VectorTab(this, m_processorManager->getRegisterFile());
     // a little experiment
     connect(this, &MainWindow::processorChangedSignal,
             dynamic_cast<ProcessorTab *>(m_tabs[TabIndex::ProcessorTabIndex]),
@@ -408,6 +411,7 @@ void MainWindow::setUpTabs()
     m_stackedTabs->addWidget(m_tabs[TabIndex::CacheTabIndex]);
     m_stackedTabs->addWidget(m_tabs[TabIndex::CompilerTabIndex]);
     m_stackedTabs->addWidget(m_tabs[TabIndex::ProfilerTabIndex]);
+    m_stackedTabs->addWidget(m_tabs[TabIndex::VectorTabIndex]);
 }
 
 bool MainWindow::tryParseAndLoadProgram()
@@ -495,6 +499,11 @@ void MainWindow::processorChanged(const ProcessorType &vmType)
     if (cacheTab)
     {
         cacheTab->changeMemoryController(m_processorManager->getMemoryController());
+    }
+    auto *vectorTab = dynamic_cast<VectorTab *>(m_tabs[TabIndex::VectorTabIndex]);
+    if (vectorTab)
+    {
+        vectorTab->changeRegisterFile(m_processorManager->getRegisterFile());
     }
     emit processorChangedSignal();
 

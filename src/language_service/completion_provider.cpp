@@ -68,6 +68,10 @@ void CompletionProvider::loadRegisters()
         registers << name;
     for (const char *alias : register_names::kFprAliases)
         registers << alias;
+    // Vector registers, and the v0.t mask operand of masked vector instructions.
+    for (int i = 0; i < 32; ++i)
+        registers << QString("v%1").arg(i);
+    registers << "v0.t";
     m_registers = registers;
 }
 
