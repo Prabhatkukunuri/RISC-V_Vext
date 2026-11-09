@@ -10,6 +10,7 @@
 #include "config/config.h"
 #include "common/globals.h"
 #include "ui/processor_tab/processor_designs/rvss_processor_circuit_scene.h"
+#include "processor/vector/vector_execute.h"
 #include "utils/utils.h"
 #include <QDebug>
 #include <algorithm>
@@ -207,6 +208,11 @@ void RVSSProcessor::Execute()
     else if (opcode == 0b1110011)
     {
         ExecuteCsr();
+        return;
+    }
+    else if (opcode == rvv::OPCODE_OP_V)
+    {
+        ExecuteVector();
         return;
     }
 
@@ -412,6 +418,16 @@ void RVSSProcessor::ExecuteCsr()
     csr_old_value_ = csr_val;
     csr_write_val_ = registers_.ReadGpr(rs1);
     csr_uimm_ = rs1;
+}
+
+void RVSSProcessor::ExecuteVector()
+{
+    uint8_t rs1 = (current_instruction_ >> 15) & 0b11111;
+    uint8_t rs2 = (current_instruction_ >> 20) & 0b11111;
+    // Vector registers and CSRs are committed here; rd (vset* only) waits for WriteBack.
+    vector_result_ = rvv::ExecuteVectorInstruction(current_instruction_, registers_.ReadGpr(rs1),
+                                                   registers_.ReadGpr(rs2), registers_,
+                                                   current_delta_.register_changes);
 }
 
 // TODO: implement writeback for syscalls
@@ -631,7 +647,7 @@ void RVSSProcessor::WriteMemory()
     uint8_t rs2 = (current_instruction_ >> 20) & 0b11111;
     uint8_t funct3 = (current_instruction_ >> 12) & 0b111;
 
-    if (opcode == 0b1110011 && funct3 == 0b000)
+    if ((opcode == 0b1110011 && funct3 == 0b000) || opcode == rvv::OPCODE_OP_V)
     {
         return;
     }
@@ -854,6 +870,11 @@ void RVSSProcessor::WriteBack()
     else if (opcode == 0b1110011)
     { // CSR opcode
         WriteBackCsr();
+        return;
+    }
+    else if (opcode == rvv::OPCODE_OP_V)
+    {
+        WriteBackVector();
         return;
     }
 
@@ -1084,6 +1105,23 @@ void RVSSProcessor::WriteBackCsr()
     if (old_csr != new_csr)
     {
         current_delta_.register_changes.push_back({csr_target_address_, 1, old_csr, new_csr});
+    }
+}
+
+void RVSSProcessor::WriteBackVector()
+{
+    if (!vector_result_.writesRd)
+    {
+        return;
+    }
+    // vset*: rd gets the new vl.
+    uint8_t rd = (current_instruction_ >> 7) & 0b11111;
+    uint64_t old_gpr = registers_.ReadGpr(rd);
+    registers_.WriteGpr(rd, vector_result_.rdValue);
+    uint64_t new_gpr = registers_.ReadGpr(rd);
+    if (old_gpr != new_gpr)
+    {
+        current_delta_.register_changes.push_back({rd, 0, old_gpr, new_gpr});
     }
 }
 
@@ -1356,6 +1394,7 @@ void RVSSProcessor::Reset()
     csr_old_value_ = 0;
     csr_write_val_ = 0;
     csr_uimm_ = 0;
+    vector_result_ = rvv::VectorExecResult{};
     current_delta_.register_changes.clear();
     current_delta_.memory_changes.clear();
     current_delta_.old_pc = 0;

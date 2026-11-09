@@ -2,6 +2,7 @@
 #include "processor/pipeline_registers.h"
 #include "processor/processor_base.h"
 #include "processor/processor_manager.h"
+#include "processor/vector/vector_execute.h"
 #include "rv5s_control_unit.h"
 
 namespace Kites
@@ -93,6 +94,14 @@ class RV5StageVM_Base : public ProcessorBase
     uint64_t execute_double();
 
     void execute_csr() {};
+
+    /**
+     * @brief Executes a vector (OP-V) instruction in EX. Vector registers and vector CSRs are
+     * committed here, as the F/D ops commit fcsr: instructions reach EX in order and EX is never
+     * squashed, so the next vector instruction always sees these writes. Returns the value for rd
+     * (the new vl of a vset*; reg_write is off for the others).
+     */
+    uint64_t execute_vector(uint32_t instruction, uint64_t rs1_value, uint64_t rs2_value);
 
     void pipeline_memory();
     void pipeline_writeback();

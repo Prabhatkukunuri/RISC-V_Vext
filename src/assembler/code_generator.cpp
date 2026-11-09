@@ -235,6 +235,54 @@ uint32_t generateCSRITypeMachineCode(const ICUnit &block)
     return machineCode;
 }
 
+uint32_t generateVsetMachineCode(const ICUnit &block)
+{
+    const std::string &name = block.getOpcode();
+    const uint32_t rd = extractRegisterIndex(block.getRd());
+    uint32_t machineCode = (0b111u << 12) | (rd << 7) | 0b1010111u; // OP-V, funct3 = OPCFG
+
+    if (name == "vsetvl")
+    {
+        const uint32_t rs1 = extractRegisterIndex(block.getRs1());
+        const uint32_t rs2 = extractRegisterIndex(block.getRs2());
+        return machineCode | (0b1000000u << 25) | (rs2 << 20) | (rs1 << 15);
+    }
+
+    const uint32_t vtypei = block.getVtype();
+    if (name == "vsetivli")
+    {
+        // bits 31:30 = 11, zimm[9:0] in 29:20, AVL uimm[4:0] in the rs1 field.
+        const uint32_t uimm = static_cast<uint32_t>(std::stoul(block.getImm())) & 0x1F;
+        return machineCode | (0b11u << 30) | ((vtypei & 0x3FF) << 20) | (uimm << 15);
+    }
+
+    // vsetvli: bit 31 = 0, zimm[10:0] in 30:20.
+    const uint32_t rs1 = extractRegisterIndex(block.getRs1());
+    return machineCode | ((vtypei & 0x7FF) << 20) | (rs1 << 15);
+}
+
+uint32_t generateVectorArithMachineCode(const ICUnit &block)
+{
+    // funct6[31:26] | vm[25] | vs2[24:20] | vs1/rs1/simm5[19:15] | funct3[14:12] | vd[11:7] | OP-V
+    const auto &encoding = instruction_set::instruction_encoding_map.at(
+        instruction_set::instruction_string_map.at(block.getOpcode()));
+    const uint32_t vd = extractRegisterIndex(block.getRd());
+    const uint32_t vs2 = extractRegisterIndex(block.getRs2());
+    uint32_t source;
+    if (encoding.funct3 == 0b011) // OPIVI: simm5
+    {
+        source = static_cast<uint32_t>(std::stoi(block.getImm())) & 0x1F;
+    }
+    else // OPIVV vs1 / OPIVX rs1
+    {
+        source = extractRegisterIndex(block.getRs1());
+    }
+    return (static_cast<uint32_t>(encoding.funct6) << 26) |
+           (static_cast<uint32_t>(block.getVm() & 1) << 25) | (vs2 << 20) | (source << 15) |
+           (static_cast<uint32_t>(encoding.funct3) << 12) | (vd << 7) |
+           static_cast<uint32_t>(encoding.opcode);
+}
+
 uint32_t generateFDRTypeMachineCode(const ICUnit &block)
 {
     const auto &encoding =
@@ -366,7 +414,15 @@ generateMachineCode(const std::vector<std::pair<ICUnit, bool>> &IntermediateCode
     {
         const ICUnit &block = pair.first;
         uint32_t code;
-        if (instruction_set::isValidRTypeInstruction(block.getOpcode()))
+        if (instruction_set::isValidVsetInstruction(block.getOpcode()))
+        {
+            code = generateVsetMachineCode(block);
+        }
+        else if (instruction_set::isValidVectorArithInstruction(block.getOpcode()))
+        {
+            code = generateVectorArithMachineCode(block);
+        }
+        else if (instruction_set::isValidRTypeInstruction(block.getOpcode()))
         {
             code = generateRTypeMachineCode(block);
         }

@@ -353,6 +353,11 @@ void RV5StageProcessorHF::pipeline_execute()
         // --- EXECUTION ---
         alu::AluOp alu_operation = control_unit_.GetAluSignal(instruction, id_ex_reg_.alu_op > 0);
         std::tie(alu_result, overflow) = alu::Alu::execute(alu_operation, alu_in1, alu_in2);
+        if (((instruction) & 0x7F) == rvv::OPCODE_OP_V)
+        {
+            // vset*: alu_in1/alu_in2 hold x[rs1]/x[rs2] after forwarding.
+            alu_result = execute_vector(instruction, alu_in1, alu_in2);
+        }
         // temporary fix for lui instruction
 
         if ((id_ex_reg_.instruction & 0b1111111) == 0b0110111) // lui

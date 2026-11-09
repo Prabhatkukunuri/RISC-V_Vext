@@ -134,6 +134,11 @@ Token Lexer::identifier()
     {
         return {TokenType::FP_REGISTER, value, line_number_, start_column};
     }
+    // v0-v31, and the "v0.t" mask operand (the '.' keeps it a single identifier).
+    if (IsValidVectorRegister(value) || value == "v0.t")
+    {
+        return {TokenType::VEC_REGISTER, value, line_number_, start_column};
+    }
     if (IsValidCsr(value))
     {
         return {TokenType::CSR_REGISTER, value, line_number_, start_column};

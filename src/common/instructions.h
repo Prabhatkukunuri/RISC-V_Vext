@@ -186,7 +186,21 @@ enum class Instruction
     kfmv_x_d,
     kfcvt_d_l,
     kfcvt_d_lu,
-    kfmv_d_x
+    kfmv_d_x,
+
+    // RVV configuration-setting instructions
+    kvsetvli,
+    kvsetivli,
+    kvsetvl,
+
+    // RVV single-width integer add and subtract
+    kvadd_vv,
+    kvadd_vx,
+    kvadd_vi,
+    kvsub_vv,
+    kvsub_vx,
+    kvrsub_vx,
+    kvrsub_vi
 };
 
 // TODO: use enum class for instruction encoding
@@ -446,6 +460,14 @@ enum class SyntaxType
                          ///< floating-point-register
     O_FPR_C_I_LP_GPR_RP, ///< Opcode floating-point-register , immediate , lparen ( general-register
                          ///< ) rparen
+
+    O_GPR_C_GPR_C_VTYPE, ///< Opcode general-register , general-register , vtype (vsetvli)
+    O_GPR_C_I_C_VTYPE,   ///< Opcode general-register , uimm , vtype (vsetivli)
+
+    // Vector arithmetic: vd, vs2, <source>, each with an optional trailing ", v0.t" mask.
+    O_VR_C_VR_C_VR,  ///< Opcode vector-register , vector-register , vector-register (OPIVV)
+    O_VR_C_VR_C_GPR, ///< Opcode vector-register , vector-register , general-register (OPIVX)
+    O_VR_C_VR_C_I,   ///< Opcode vector-register , vector-register , simm5 (OPIVI)
 };
 
 extern std::unordered_map<std::string, RTypeInstructionEncoding> R_type_instruction_encoding_map;
@@ -510,6 +532,9 @@ bool isValidFDR3TypeInstruction(const std::string &instruction);
 bool isValidFDR4TypeInstruction(const std::string &instruction);
 bool isValidFDITypeInstruction(const std::string &instruction);
 bool isValidFDSTypeInstruction(const std::string &instruction);
+
+bool isValidVsetInstruction(const std::string &instruction);
+bool isValidVectorArithInstruction(const std::string &instruction);
 
 bool isFInstruction(const uint32_t &instruction);
 bool isDInstruction(const uint32_t &instruction);

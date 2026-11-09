@@ -234,6 +234,11 @@ void RV5StageProcessorHNF::pipeline_execute()
     else
     {
         std::tie(alu_result, overflow) = alu::Alu::execute(alu_operation, alu_in1, alu_in2);
+        if (((cur_instruction) & 0x7F) == rvv::OPCODE_OP_V)
+        {
+            // vset*: alu_in1/alu_in2 hold x[rs1]/x[rs2] after forwarding.
+            alu_result = execute_vector(cur_instruction, alu_in1, alu_in2);
+        }
     }
     if ((cur_instruction & 0b1111111) == 0b0110111) // lui
     {

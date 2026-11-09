@@ -157,6 +157,11 @@
         "lt.d",
         "ge.d"
     ],
+    "VInstruction": [
+        "vsetvli",
+        "vsetivli",
+        "vsetvl"
+    ],
     "PseudoInstruction": [
         "la",
         "nop",

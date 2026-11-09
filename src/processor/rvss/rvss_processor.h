@@ -9,6 +9,7 @@
 #include "processor/processor_base.h"
 #include "processor/processor_manager.h"
 #include "rvss_control_unit.h"
+#include "processor/vector/vector_execute.h"
 
 #include <cstdint>
 #include <iostream>
@@ -47,6 +48,9 @@ class RVSSProcessor : public ProcessorBase
     uint64_t csr_write_val_{};
     uint8_t csr_uimm_{};
 
+    // Vector (OP-V) intermediate variables
+    rvv::VectorExecResult vector_result_{};
+
     std::stack<StepDelta> undo_stack_;
     std::stack<StepDelta> redo_stack_;
 
@@ -61,6 +65,7 @@ class RVSSProcessor : public ProcessorBase
     void ExecuteDouble();
     void ExecuteCsr();
     void HandleSyscall();
+    void ExecuteVector();
 
     void WriteMemory();
     void WriteMemoryFloat();
@@ -70,6 +75,7 @@ class RVSSProcessor : public ProcessorBase
     void WriteBackFloat();
     void WriteBackDouble();
     void WriteBackCsr();
+    void WriteBackVector();
 
     RVSSProcessor();
     ~RVSSProcessor();

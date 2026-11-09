@@ -614,6 +614,7 @@ void RV5StageVM_Base::pipeline_writeback()
         case 0b0010111: // AUIPC
         case 0b0111011: // OP-32 R-type (ADDW, SUBW, MULW, DIVW, DIVUW, REMW, REMUW, SLLW, SRLW, SRAW)
         case 0b0011011: // OP-32 I-type (ADDIW, SLLIW, SRLIW, SRAIW)
+        case rvv::OPCODE_OP_V: // vset*: the new vl
         {
             registers_.WriteGpr(mem_wb_reg_.rd, write_data);
             break;
@@ -723,6 +724,14 @@ void RV5StageVM_Base::pipeline_writeback_double()
     {
         current_delta_.register_changes.push_back({reg_index, reg_type, old_reg, new_reg});
     }
+}
+
+uint64_t RV5StageVM_Base::execute_vector(uint32_t instruction, uint64_t rs1_value,
+                                         uint64_t rs2_value)
+{
+    return rvv::ExecuteVectorInstruction(instruction, rs1_value, rs2_value, registers_,
+                                         current_delta_.register_changes)
+        .rdValue;
 }
 
 uint64_t RV5StageVM_Base::execute_float()

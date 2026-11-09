@@ -142,6 +142,24 @@ class Parser
     bool parse_O_GPR_C_CSR_C_GPR();
     bool parse_O_GPR_C_CSR_C_I();
 
+    bool parse_O_GPR_C_GPR_C_VTYPE();
+    bool parse_O_GPR_C_I_C_VTYPE();
+    /**
+     * @brief Parses the vtype operands starting at peekToken(first) to the end of the line:
+     * either "<sew>[, <lmul>][, ta|tu][, ma|mu]" or a single number no larger than @p maxImm.
+     * Records an error and returns false if they are malformed.
+     */
+    bool parseVtypeOperands(int first, uint64_t maxImm, uint64_t &vtype);
+
+    bool parse_O_VR_C_VR_C_VR();
+    bool parse_O_VR_C_VR_C_GPR();
+    bool parse_O_VR_C_VR_C_I();
+    /**
+     * @brief Shared parser for "op vd, vs2, <source>[, v0.t]". @p sourceType is the token type
+     * of the third operand: VEC_REGISTER (vs1), GP_REGISTER (rs1) or NUM (simm5).
+     */
+    bool parseVectorArith(TokenType sourceType);
+
     bool parse_O_FPR_C_FPR_C_FPR_C_FPR();
     bool parse_O_FPR_C_FPR_C_FPR_C_FPR_C_RM();
     bool parse_O_FPR_C_FPR_C_FPR();

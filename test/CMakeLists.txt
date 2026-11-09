@@ -21,6 +21,10 @@ if(DISABLE_GUI)
     target_compile_definitions(kites_test PRIVATE DISABLE_GUI)
 endif()
 
+# Tests open fixtures as "../examples/...": test_main changes into this folder first so those
+# paths reach <repo>/examples whatever the build directory is called.
+target_compile_definitions(kites_test PRIVATE KITES_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 if(VM_DEBUG_PRINTS)
     target_compile_definitions(kites_test PRIVATE VM_DEBUG_PRINTS)
 endif()
@@ -55,6 +59,9 @@ if(ENABLE_COVERAGE)
     if(DISABLE_GUI)
         target_compile_definitions(kites_test_cov PRIVATE DISABLE_GUI)
     endif()
+
+    target_compile_definitions(kites_test_cov PRIVATE
+        KITES_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
     if(VM_DEBUG_PRINTS)
         target_compile_definitions(kites_test_cov PRIVATE VM_DEBUG_PRINTS)

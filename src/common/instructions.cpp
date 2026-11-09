@@ -7,6 +7,7 @@
 /** @endcond */
 
 #include "common/instructions.h"
+#include "processor/vector/vector_config.h"
 
 #include <string>
 #include <unordered_map>
@@ -176,6 +177,21 @@ std::unordered_map<Instruction, InstructionEncoding> instruction_encoding_map = 
     {Instruction::kfclass_s, {0b1010011, -1, 0b001, 0b00000, -1, 0b1110000}},
     {Instruction::kfclass_d, {0b1010011, -1, 0b001, 0b00000, -1, 0b1110001}},
 
+    // RVV vset*: OP-V with funct3 = OPCFG; bits 31:30 tell the three forms apart.
+    {Instruction::kvsetvli, {0b1010111, -1, 0b111, -1, -1, -1}},
+    {Instruction::kvsetivli, {0b1010111, -1, 0b111, -1, -1, -1}},
+    {Instruction::kvsetvl, {0b1010111, -1, 0b111, -1, -1, 0b1000000}},
+
+    // RVV integer arithmetic: funct3 picks the operand form (OPIVV 000, OPIVX 100,
+    // OPIVI 011), funct6 the operation.
+    {Instruction::kvadd_vv, {0b1010111, -1, 0b000, -1, 0b000000, -1}},
+    {Instruction::kvadd_vx, {0b1010111, -1, 0b100, -1, 0b000000, -1}},
+    {Instruction::kvadd_vi, {0b1010111, -1, 0b011, -1, 0b000000, -1}},
+    {Instruction::kvsub_vv, {0b1010111, -1, 0b000, -1, 0b000010, -1}},
+    {Instruction::kvsub_vx, {0b1010111, -1, 0b100, -1, 0b000010, -1}},
+    {Instruction::kvrsub_vx, {0b1010111, -1, 0b100, -1, 0b000011, -1}},
+    {Instruction::kvrsub_vi, {0b1010111, -1, 0b011, -1, 0b000011, -1}},
+
     {Instruction::kfmadd_s, {0b1000011, 0b00, -1, -1, -1, -1}},
     {Instruction::kfmsub_s, {0b1000111, 0b00, -1, -1, -1, -1}},
     {Instruction::kfnmsub_s, {0b1001011, 0b00, -1, -1, -1, -1}},
@@ -334,6 +350,18 @@ std::unordered_map<std::string, Instruction> instruction_string_map = {
     {"fclass.s", Instruction::kfclass_s},
     {"fclass.d", Instruction::kfclass_d},
 
+    {"vsetvli", Instruction::kvsetvli},
+    {"vsetivli", Instruction::kvsetivli},
+    {"vsetvl", Instruction::kvsetvl},
+
+    {"vadd.vv", Instruction::kvadd_vv},
+    {"vadd.vx", Instruction::kvadd_vx},
+    {"vadd.vi", Instruction::kvadd_vi},
+    {"vsub.vv", Instruction::kvsub_vv},
+    {"vsub.vx", Instruction::kvsub_vx},
+    {"vrsub.vx", Instruction::kvrsub_vx},
+    {"vrsub.vi", Instruction::kvrsub_vi},
+
     {"fmadd.s", Instruction::kfmadd_s},
     {"fmsub.s", Instruction::kfmsub_s},
     {"fnmsub.s", Instruction::kfnmsub_s},
@@ -375,7 +403,13 @@ static const std::unordered_set<std::string> valid_instructions = {
     "fld", "fsd", "fmadd.d", "fmsub.d", "fnmsub.d", "fnmadd.d", "fadd.d", "fsub.d", "fmul.d",
     "fdiv.d", "fsqrt.d", "fsgnj.d", "fsgnjn.d", "fsgnjx.d", "fmin.d", "fmax.d", "fcvt.s.d",
     "fcvt.d.s", "feq.d", "flt.d", "fle.d", "fclass.d", "fcvt.w.d", "fcvt.wu.d", "fcvt.d.w",
-    "fcvt.d.wu", "fcvt.l.d", "fcvt.lu.d", "fmv.x.d", "fcvt.d.l", "fcvt.d.lu", "fmv.d.x"
+    "fcvt.d.wu", "fcvt.l.d", "fcvt.lu.d", "fmv.x.d", "fcvt.d.l", "fcvt.d.lu", "fmv.d.x",
+
+    // RVV configuration-setting
+    "vsetvli", "vsetivli", "vsetvl",
+
+    // RVV integer arithmetic
+    "vadd.vv", "vadd.vx", "vadd.vi", "vsub.vv", "vsub.vx", "vrsub.vx", "vrsub.vi"
 
 };
 
@@ -460,6 +494,12 @@ static const std::unordered_set<std::string> CSRIInstructions = {"csrrwi", "csrr
 
 static const std::unordered_set<std::string> CSRInstructions = {"csrrw",  "csrrs",  "csrrc",
                                                                 "csrrwi", "csrrsi", "csrrci"};
+
+static const std::unordered_set<std::string> VsetInstructions = {"vsetvli", "vsetivli",
+                                                                 "vsetvl"};
+
+static const std::unordered_set<std::string> VectorArithInstructions = {
+    "vadd.vv", "vadd.vx", "vadd.vi", "vsub.vv", "vsub.vx", "vrsub.vx", "vrsub.vi"};
 
 static const std::unordered_set<std::string> MExtensionInstructions = {
     "mul",  "mulh", "mulhsu", "mulhu", "div",  "divu", "rem",
@@ -967,6 +1007,17 @@ std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map 
                                             // from an x (integer) register into an f
                                             // (floating-point) register without conversion
 
+    {"vsetvli", {SyntaxType::O_GPR_C_GPR_C_VTYPE}},
+    {"vsetivli", {SyntaxType::O_GPR_C_I_C_VTYPE}},
+    {"vsetvl", {SyntaxType::O_GPR_C_GPR_C_GPR}},
+
+    {"vadd.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vadd.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vadd.vi", {SyntaxType::O_VR_C_VR_C_I}},
+    {"vsub.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vsub.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vrsub.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vrsub.vi", {SyntaxType::O_VR_C_VR_C_I}},
 };
 
 bool isValidInstruction(const std::string &instruction)
@@ -1080,6 +1131,16 @@ bool isValidFDITypeInstruction(const std::string &instruction)
 bool isValidFDSTypeInstruction(const std::string &instruction)
 {
     return (FDExtensionSTypeInstructions.find(instruction) != FDExtensionSTypeInstructions.end());
+}
+
+bool isValidVsetInstruction(const std::string &instruction)
+{
+    return VsetInstructions.find(instruction) != VsetInstructions.end();
+}
+
+bool isValidVectorArithInstruction(const std::string &instruction)
+{
+    return VectorArithInstructions.find(instruction) != VectorArithInstructions.end();
 }
 
 bool isFInstruction(const uint32_t &instruction)
@@ -1206,6 +1267,11 @@ std::string getExpectedSyntaxes(const std::string &opcode)
         {SyntaxType::O_GPR_C_FPR_C_RM, "<gp-reg>, <fp-reg>, <rm>"},
         {SyntaxType::O_GPR_C_FPR_C_FPR, "<gp-reg>, <fp-reg>, <fp-reg>"},
         {SyntaxType::O_FPR_C_I_LP_GPR_RP, "<fp-reg>, <imm>(<gp-reg>)"},
+        {SyntaxType::O_GPR_C_GPR_C_VTYPE, "<gp-reg>, <gp-reg>, <sew>[, <lmul>][, ta|tu][, ma|mu]"},
+        {SyntaxType::O_GPR_C_I_C_VTYPE, "<gp-reg>, <uimm>, <sew>[, <lmul>][, ta|tu][, ma|mu]"},
+        {SyntaxType::O_VR_C_VR_C_VR, "<v-reg>, <v-reg>, <v-reg>[, v0.t]"},
+        {SyntaxType::O_VR_C_VR_C_GPR, "<v-reg>, <v-reg>, <gp-reg>[, v0.t]"},
+        {SyntaxType::O_VR_C_VR_C_I, "<v-reg>, <v-reg>, <simm5>[, v0.t]"},
     };
 
     std::string syntaxes;
@@ -1265,6 +1331,8 @@ InstructionType getInstructionType(const std::string &instruction)
         return InstructionType::F_TYPE;
     if (isValidFDSTypeInstruction(instruction))
         return InstructionType::F_TYPE;
+    if (isValidVsetInstruction(instruction) || isValidVectorArithInstruction(instruction))
+        return InstructionType::V_TYPE;
     // if (isValidBaseExtensionInstruction(instruction))
     //     return InstructionType::BASE_EXT;
 
@@ -1796,6 +1864,44 @@ std::string disassemble(uint32_t instruction)
             return "fmv.d.x " + fr(rd) + ", " + xr(rs1);
 
         break;
+    }
+
+    case 0b1010111:
+    { // OP-V: only the vset* configuration instructions so far
+        switch (rvv::DecodeVsetKind(instruction))
+        {
+        case rvv::VsetKind::Vsetvli:
+            return "vsetvli " + xr(rd) + ", " + xr(rs1) + ", " +
+                   rvv::FormatVtype(rvv::VsetImmediateVtype(instruction));
+        case rvv::VsetKind::Vsetivli:
+            return "vsetivli " + xr(rd) + ", " + std::to_string(rs1) + ", " +
+                   rvv::FormatVtype(rvv::VsetImmediateVtype(instruction));
+        case rvv::VsetKind::Vsetvl:
+            return "vsetvl " + xr(rd) + ", " + xr(rs1) + ", " + xr(rs2);
+        default:
+            break;
+        }
+
+        // Arithmetic: name vd, vs2, <vs1 | rs1 | simm5>[, v0.t]
+        const std::string name = rvv::VectorArithMnemonic(instruction);
+        if (name.empty())
+            break;
+        auto vr = [](uint8_t r) { return "v" + std::to_string(r); };
+        std::string source;
+        switch (funct3)
+        {
+        case 0b000: // OPIVV
+            source = vr(rs1);
+            break;
+        case 0b100: // OPIVX
+            source = xr(rs1);
+            break;
+        default: // OPIVI
+            source = std::to_string(signext(rs1, 5));
+            break;
+        }
+        const bool masked = ((instruction >> 25) & 1) == 0;
+        return name + " " + vr(rd) + ", " + vr(rs2) + ", " + source + (masked ? ", v0.t" : "");
     }
 
     } // end switch

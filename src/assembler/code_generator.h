@@ -41,8 +41,12 @@ struct ICUnit
     std::array<char, 33> imm; ///< Immediate value (up to 32 characters, null-terminated).
     std::string label;        ///< Label associated with this code block, if any.
     uint8_t rm;               ///< Rounding mode (up to 4 characters, null-terminated).
+    uint32_t vtype;           ///< vtypei of vsetvli/vsetivli.
+    uint8_t vm;               ///< Vector mask bit: 1 = unmasked, 0 = masked by v0.t.
 
-    ICUnit() : line_number{}, opcode{}, rd{}, rs1{}, rs2{}, rs3{}, csr{}, imm{}, label{}, rm{}
+    ICUnit()
+        : line_number{}, opcode{}, rd{}, rs1{}, rs2{}, rs3{}, csr{}, imm{}, label{}, rm{}, vtype{},
+          vm{1}
     {
         opcode.fill('\0');
         rd.fill('\0');
@@ -99,7 +103,20 @@ struct ICUnit
             os << " rm=" << static_cast<int>(unit.rm);
         }
 
-        // 6. label (if any) — put at the end in angle brackets
+        // 6. vtype (vset* only, print only if non-zero)
+        if (unit.vtype != 0)
+        {
+            std::ios_base::fmtflags f(os.flags());
+            os << " vtype=0x" << std::hex << unit.vtype;
+            os.flags(f);
+        }
+
+        if (unit.vm == 0)
+        {
+            os << ", v0.t";
+        }
+
+        // 7. label (if any) — put at the end in angle brackets
         if (!unit.label.empty())
         {
             os << " <" << unit.label << '>';
@@ -151,6 +168,16 @@ struct ICUnit
     void setCsr(uint32_t value)
     {
         csr = value;
+    }
+
+    void setVtype(uint32_t value)
+    {
+        vtype = value;
+    }
+
+    void setVm(uint8_t value)
+    {
+        vm = value;
     }
 
     void setImm(const std::string &value)
@@ -207,6 +234,16 @@ struct ICUnit
     [[nodiscard]] uint32_t getCsr() const
     {
         return csr;
+    }
+
+    [[nodiscard]] uint32_t getVtype() const
+    {
+        return vtype;
+    }
+
+    [[nodiscard]] uint8_t getVm() const
+    {
+        return vm;
     }
 
     [[nodiscard]] std::string getImm() const
@@ -302,6 +339,8 @@ uint32_t generateJTypeMachineCode(const ICUnit &block);
 
 uint32_t generateCSRRTypeMachineCode(const ICUnit &block);
 uint32_t generateCSRITypeMachineCode(const ICUnit &block);
+uint32_t generateVsetMachineCode(const ICUnit &block);
+uint32_t generateVectorArithMachineCode(const ICUnit &block);
 
 uint32_t generateFDRTypeMachineCode(const ICUnit &block);
 uint32_t generateFDR1TypeMachineCode(const ICUnit &block);

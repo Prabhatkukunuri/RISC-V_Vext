@@ -6,6 +6,7 @@
 #include "processor/rv5s/rv5s_control_unit.h"
 #include "common/instructions.h" // For instruction encoding maps if needed
 #include "processor/alu.h"
+#include "processor/vector/vector_execute.h"
 
 #include <cstdint>
 
@@ -98,6 +99,13 @@ void RV5SControlUnit::SetControlSignals(uint32_t instruction)
     case 0b1001111: // FNMSUB
         reg_write_ = true;
         alu_op_ = 4; // ALUOp code '4' for FMA-type decode
+        break;
+
+    // V Extension
+    case 0b1010111: // OP-V
+        // Only vsetvli/vsetivli/vsetvl write a GPR (the new vl); arithmetic writes vd in EX.
+        reg_write_ = rvv::VectorInstructionWritesGpr(instruction);
+        alu_op_ = 0; // EX replaces the ALU result with the new vl
         break;
     }
 }

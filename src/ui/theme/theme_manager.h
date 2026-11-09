@@ -23,6 +23,7 @@ X(R64Instruction, "R64Instruction")\
 X(MInstruction, "MInstruction")\
 X(FInstruction, "FInstruction")\
 X(DInstruction, "DInstruction")\
+X(VInstruction, "VInstruction")\
 X(PseudoInstruction, "PseudoInstruction")\
 
 enum class SyntaxStyle

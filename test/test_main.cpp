@@ -7,9 +7,9 @@
 
 int main(int argc, char *argv[]) 
 {
-  std::cout << std::filesystem::current_path() << std::endl;
-  std::filesystem::current_path(std::filesystem::path(argv[0]).parent_path());
-  std::cout << std::filesystem::current_path() << std::endl;
+  // Fixtures are opened as "../examples/...", relative to the source test/ folder (set by
+  // test/CMakeLists.txt). vm_state output is unaffected: its path is fixed before main runs.
+  std::filesystem::current_path(KITES_TEST_SOURCE_DIR);
   #ifdef _WIN32
     // Set console output code page to UTF-8 (65001)
     SetConsoleOutputCP(65001);  
