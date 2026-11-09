@@ -70,17 +70,19 @@ void runMatrixMultiplyCacheTest(const char* vm_label)
     Kites::Cache* l2_cache = vm->memory_controller_.getL2Cache();
     Kites::Cache* instruction_cache = vm->memory_controller_.getInstructionCache();
 
+    // Line sizes are in bytes. L2 is 64 sets x 4 B, so A/B/C (0x100 apart) share sets:
+    // it needs 4 ways for warming C not to evict A before the probe below.
     l2_cache->reconfigure(CacheConfig{
         64,
-        1,
-        2,
+        4,
+        4,
         WritePolicy::WriteBack,
         AllocationPolicy::WriteAllocate,
         ReplacementPolicy::LRU});
 
     l1_cache->reconfigure(CacheConfig{
         2,
-        1,
+        4,
         1,
         WritePolicy::WriteBack,
         AllocationPolicy::WriteAllocate,
@@ -88,7 +90,7 @@ void runMatrixMultiplyCacheTest(const char* vm_label)
 
     instruction_cache->reconfigure(CacheConfig{
         4,
-        1,
+        4,
         1,
         WritePolicy::WriteThrough,
         AllocationPolicy::WriteAllocate,

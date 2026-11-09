@@ -265,7 +265,7 @@ protected:
 
 TEST_F(ReplacementPolicyTest, LRUEvictsLeastRecentlyUsed)
 {
-    Kites::Cache cache(ram, 1, 1, 2,
+    Kites::Cache cache(ram, 1, 4, 2,
                 Kites::WritePolicy::WriteBack,
                 Kites::AllocationPolicy::WriteAllocate,
                 Kites::ReplacementPolicy::LRU);
@@ -289,7 +289,7 @@ TEST_F(ReplacementPolicyTest, LRUEvictsLeastRecentlyUsed)
 #if 0
 TEST_F(ReplacementPolicyTest, FIFOEvictsFirstInserted)
 {
-    Kites::Cache cache(ram, 1, 1, 2,
+    Kites::Cache cache(ram, 1, 4, 2,
                 Kites::WritePolicy::WriteBack,
                 Kites::AllocationPolicy::WriteAllocate,
                 Kites::ReplacementPolicy::FIFO);
