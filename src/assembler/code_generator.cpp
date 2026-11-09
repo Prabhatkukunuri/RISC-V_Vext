@@ -7,6 +7,7 @@
 
 #include "code_generator.h"
 #include "common/instructions.h"
+#include "processor/vector/vector_memory.h"
 
 #include <stdexcept>
 #include <string>
@@ -287,6 +288,16 @@ uint32_t generateVectorArithMachineCode(const ICUnit &block)
            static_cast<uint32_t>(encoding.opcode);
 }
 
+uint32_t generateVectorMemoryMachineCode(const ICUnit &block)
+{
+    // nf | mew | mop | vm | lumop/sumop/rs2/vs2 | rs1 | width | vd/vs3 | LOAD-FP/STORE-FP
+    const rvv::VectorMemFields *fields = rvv::LookupVectorMemMnemonic(block.getOpcode());
+    const uint32_t vd = extractRegisterIndex(block.getRd());
+    const uint32_t rs1 = extractRegisterIndex(block.getRs1());
+    const uint32_t field24_20 = block.getRs2().empty() ? 0 : extractRegisterIndex(block.getRs2());
+    return rvv::EncodeVectorMem(*fields, vd, rs1, field24_20, block.getVm() == 0);
+}
+
 uint32_t generateFDRTypeMachineCode(const ICUnit &block)
 {
     const auto &encoding =
@@ -425,6 +436,10 @@ generateMachineCode(const std::vector<std::pair<ICUnit, bool>> &IntermediateCode
         else if (instruction_set::isValidVectorArithInstruction(block.getOpcode()))
         {
             code = generateVectorArithMachineCode(block);
+        }
+        else if (instruction_set::isValidVectorMemoryInstruction(block.getOpcode()))
+        {
+            code = generateVectorMemoryMachineCode(block);
         }
         else if (instruction_set::isValidRTypeInstruction(block.getOpcode()))
         {

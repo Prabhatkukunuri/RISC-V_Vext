@@ -96,10 +96,12 @@ class RV5StageVM_Base : public ProcessorBase
     void execute_csr() {};
 
     /**
-     * @brief Executes a vector (OP-V) instruction in EX. Vector registers and vector CSRs are
-     * committed here, as the F/D ops commit fcsr: instructions reach EX in order and EX is never
-     * squashed, so the next vector instruction always sees these writes. Returns the value for rd
-     * (the new vl of a vset*; reg_write is off for the others).
+     * @brief Executes a vector instruction (OP-V, or a vector load/store) in EX. Vector registers,
+     * vector CSRs and memory are committed here, as the F/D ops commit fcsr: instructions reach EX
+     * in order and EX is never squashed, so the next vector instruction always sees these writes.
+     * Stages run WB -> MEM -> EX each cycle, so an older scalar store in MEM has already written
+     * memory when a vector load executes, and a younger scalar load reaches MEM only afterwards.
+     * Returns the value for rd (the new vl of a vset*; reg_write is off for the others).
      */
     uint64_t execute_vector(uint32_t instruction, uint64_t rs1_value, uint64_t rs2_value);
 

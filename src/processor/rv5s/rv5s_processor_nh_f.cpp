@@ -306,9 +306,10 @@ void RV5StageProcessorNHF::pipeline_execute()
 
         // --- EXECUTION ---
         std::tie(alu_result, overflow) = alu::Alu::execute(alu_operation, alu_in1, alu_in2);
-        if (((instruction) & 0x7F) == rvv::OPCODE_OP_V)
+        if (rvv::IsVectorInstruction(instruction))
         {
-            // vset*: alu_in1/alu_in2 hold x[rs1]/x[rs2] after forwarding.
+            // alu_in1/alu_in2 hold x[rs1]/x[rs2] after forwarding: the AVL/vtype of vset*, the
+            // scalar of .vx, or the base address/stride of a vector load/store.
             alu_result = execute_vector(instruction, alu_in1, alu_in2);
         }
 

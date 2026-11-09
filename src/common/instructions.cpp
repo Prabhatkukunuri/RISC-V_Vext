@@ -8,6 +8,7 @@
 
 #include "common/instructions.h"
 #include "processor/vector/vector_config.h"
+#include "processor/vector/vector_memory.h"
 
 #include <string>
 #include <unordered_map>
@@ -876,7 +877,8 @@ std::unordered_map<std::string, FDSTypeInstructionEncoding> F_D_S_type_instructi
     DL -> Data Label
     IL -> Instruction Label
 */
-std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map = {
+std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map = [] {
+  std::unordered_map<std::string, std::vector<SyntaxType>> syntaxes = {
     {"add", {SyntaxType::O_GPR_C_GPR_C_GPR}},
     {"sub", {SyntaxType::O_GPR_C_GPR_C_GPR}},
     {"xor", {SyntaxType::O_GPR_C_GPR_C_GPR}},
@@ -1126,11 +1128,33 @@ std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map 
     {"vxor.vv", {SyntaxType::O_VR_C_VR_C_VR}},
     {"vxor.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
     {"vxor.vi", {SyntaxType::O_VR_C_VR_C_I}},
-};
+  };
+
+  // RVV loads/stores: hundreds of mnemonics (EEW x NFIELDS x addressing mode), generated from
+  // one table in vector_memory.cpp. The operand form follows the addressing mode.
+  for (const std::string &name : rvv::VectorMemMnemonics())
+  {
+      switch (rvv::LookupVectorMemMnemonic(name)->mode)
+      {
+      case rvv::VectorMemMode::Strided:
+          syntaxes[name] = {SyntaxType::O_VR_C_LP_GPR_RP_C_GPR};
+          break;
+      case rvv::VectorMemMode::IndexedUnordered:
+      case rvv::VectorMemMode::IndexedOrdered:
+          syntaxes[name] = {SyntaxType::O_VR_C_LP_GPR_RP_C_VR};
+          break;
+      default:
+          syntaxes[name] = {SyntaxType::O_VR_C_LP_GPR_RP};
+          break;
+      }
+  }
+  return syntaxes;
+}();
 
 bool isValidInstruction(const std::string &instruction)
 {
-    return valid_instructions.find(instruction) != valid_instructions.end();
+    return valid_instructions.find(instruction) != valid_instructions.end() ||
+           isValidVectorMemoryInstruction(instruction);
 }
 
 bool isValidRTypeInstruction(const std::string &instruction)
@@ -1249,6 +1273,11 @@ bool isValidVsetInstruction(const std::string &instruction)
 bool isValidVectorArithInstruction(const std::string &instruction)
 {
     return VectorArithInstructions.find(instruction) != VectorArithInstructions.end();
+}
+
+bool isValidVectorMemoryInstruction(const std::string &instruction)
+{
+    return rvv::LookupVectorMemMnemonic(instruction) != nullptr;
 }
 
 bool isFInstruction(const uint32_t &instruction)
@@ -1381,6 +1410,9 @@ std::string getExpectedSyntaxes(const std::string &opcode)
         {SyntaxType::O_VR_C_VR_C_GPR, "<v-reg>, <v-reg>, <gp-reg>[, v0.t]"},
         {SyntaxType::O_VR_C_VR_C_I, "<v-reg>, <v-reg>, <simm5>[, v0.t]"},
         {SyntaxType::O_VR_C_VR, "<v-reg>, <v-reg>[, v0.t]"},
+        {SyntaxType::O_VR_C_LP_GPR_RP, "<v-reg>, (<gp-reg>)[, v0.t]"},
+        {SyntaxType::O_VR_C_LP_GPR_RP_C_GPR, "<v-reg>, (<gp-reg>), <gp-reg>[, v0.t]"},
+        {SyntaxType::O_VR_C_LP_GPR_RP_C_VR, "<v-reg>, (<gp-reg>), <v-reg>[, v0.t]"},
     };
 
     std::string syntaxes;
@@ -1440,7 +1472,8 @@ InstructionType getInstructionType(const std::string &instruction)
         return InstructionType::F_TYPE;
     if (isValidFDSTypeInstruction(instruction))
         return InstructionType::F_TYPE;
-    if (isValidVsetInstruction(instruction) || isValidVectorArithInstruction(instruction))
+    if (isValidVsetInstruction(instruction) || isValidVectorArithInstruction(instruction) ||
+        isValidVectorMemoryInstruction(instruction))
         return InstructionType::V_TYPE;
     // if (isValidBaseExtensionInstruction(instruction))
     //     return InstructionType::BASE_EXT;
@@ -1456,6 +1489,19 @@ std::string disassemble(uint32_t instruction)
 {
     if (instruction == 0 || instruction == 0x13)
         return "nop";
+
+    // Vector loads/stores share LOAD-FP/STORE-FP with flw/fsd; the width field tells them apart.
+    if (rvv::IsVectorMemoryInstruction(instruction))
+    {
+        std::string text = rvv::DisassembleVectorMem(instruction);
+        if (text.empty())
+        {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "unknown(0x%08x)", instruction);
+            text = buf;
+        }
+        return text;
+    }
 
     uint8_t opcode = instruction & 0x7F;
     uint8_t rd = (instruction >> 7) & 0x1F;

@@ -163,6 +163,16 @@ class Parser
      */
     bool parseVectorArith(std::optional<TokenType> sourceType);
 
+    bool parse_O_VR_C_LP_GPR_RP();
+    bool parse_O_VR_C_LP_GPR_RP_C_GPR();
+    bool parse_O_VR_C_LP_GPR_RP_C_VR();
+    /**
+     * @brief Shared parser for vector loads/stores: "op vd, (rs1)[, <extra>][, v0.t]", where
+     * "(rs1)" may also be written "0(rs1)". @p extraType is the token type of the stride/index
+     * operand (GP_REGISTER or VEC_REGISTER), or EOF_ when the form has none.
+     */
+    bool parseVectorMemory(TokenType extraType);
+
     bool parse_O_FPR_C_FPR_C_FPR_C_FPR();
     bool parse_O_FPR_C_FPR_C_FPR_C_FPR_C_RM();
     bool parse_O_FPR_C_FPR_C_FPR();

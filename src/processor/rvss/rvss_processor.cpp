@@ -210,7 +210,7 @@ void RVSSProcessor::Execute()
         ExecuteCsr();
         return;
     }
-    else if (opcode == rvv::OPCODE_OP_V)
+    else if (rvv::IsVectorInstruction(current_instruction_))
     {
         ExecuteVector();
         return;
@@ -424,10 +424,11 @@ void RVSSProcessor::ExecuteVector()
 {
     uint8_t rs1 = (current_instruction_ >> 15) & 0b11111;
     uint8_t rs2 = (current_instruction_ >> 20) & 0b11111;
-    // Vector registers and CSRs are committed here; rd (vset* only) waits for WriteBack.
-    vector_result_ = rvv::ExecuteVectorInstruction(current_instruction_, registers_.ReadGpr(rs1),
-                                                   registers_.ReadGpr(rs2), registers_,
-                                                   current_delta_.register_changes);
+    // Vector registers, CSRs and memory (vector loads/stores) are committed here; rd (vset*
+    // only) waits for WriteBack.
+    vector_result_ = rvv::ExecuteVectorInstruction(
+        current_instruction_, registers_.ReadGpr(rs1), registers_.ReadGpr(rs2), registers_,
+        memory_controller_, current_delta_.register_changes, current_delta_.memory_changes);
 }
 
 // TODO: implement writeback for syscalls
@@ -647,7 +648,9 @@ void RVSSProcessor::WriteMemory()
     uint8_t rs2 = (current_instruction_ >> 20) & 0b11111;
     uint8_t funct3 = (current_instruction_ >> 12) & 0b111;
 
-    if ((opcode == 0b1110011 && funct3 == 0b000) || opcode == rvv::OPCODE_OP_V)
+    // Vector loads/stores already accessed memory in Execute.
+    if ((opcode == 0b1110011 && funct3 == 0b000) ||
+        rvv::IsVectorInstruction(current_instruction_))
     {
         return;
     }
@@ -872,7 +875,7 @@ void RVSSProcessor::WriteBack()
         WriteBackCsr();
         return;
     }
-    else if (opcode == rvv::OPCODE_OP_V)
+    else if (rvv::IsVectorInstruction(current_instruction_))
     {
         WriteBackVector();
         return;

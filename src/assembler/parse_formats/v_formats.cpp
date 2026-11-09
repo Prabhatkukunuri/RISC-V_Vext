@@ -1,13 +1,14 @@
 /**
  * @file v_formats.cpp
- * @brief Parsers for the RVV instruction formats. So far only the vset* configuration
- * instructions: vsetvli rd, rs1, vtype and vsetivli rd, uimm, vtype (vsetvl uses the plain
- * O_GPR_C_GPR_C_GPR format).
+ * @brief Parsers for the RVV instruction formats: the vset* configuration instructions
+ * (vsetvli rd, rs1, vtype and vsetivli rd, uimm, vtype; vsetvl uses the plain O_GPR_C_GPR_C_GPR
+ * format), integer arithmetic (vd, vs2, vs1|rs1|simm5) and loads/stores (vd, (rs1)[, rs2|vs2]).
  */
 
 #include "assembler/parser.h"
 #include "processor/registers.h"
 #include "processor/vector/vector_config.h"
+#include "processor/vector/vector_memory.h"
 #include "utils/utils.h"
 
 #include <string>
@@ -335,5 +336,135 @@ bool Parser::parse_O_VR_C_VR_C_I()
 bool Parser::parse_O_VR_C_VR()
 {
     return parseVectorArith(std::nullopt);
+}
+
+bool Parser::parseVectorMemory(TokenType extraType)
+{
+    const unsigned int line = currentToken().line_number;
+    auto on = [&](int n, TokenType type)
+    { return peekToken(n).line_number == line && peekToken(n).type == type; };
+    auto endsAt = [&](int n)
+    { return peekToken(n).type == TokenType::EOF_ || peekToken(n).line_number != line; };
+    auto isPlainVr = [&](int n)
+    { return on(n, TokenType::VEC_REGISTER) && peekToken(n).value != "v0.t"; };
+
+    // vd , [0] ( rs1 ) [, rs2|vs2] [, v0.t]
+    if (!(isPlainVr(1) && on(2, TokenType::COMMA)))
+    {
+        return false;
+    }
+    int n = 3;
+    const bool hasOffset = on(n, TokenType::NUM);
+    if (hasOffset)
+    {
+        ++n;
+    }
+    if (!(on(n, TokenType::LPAREN) && on(n + 1, TokenType::GP_REGISTER) &&
+          on(n + 2, TokenType::RPAREN)))
+    {
+        return false;
+    }
+    const int rs1At = n + 1;
+    n += 3;
+    int extraAt = -1;
+    if (extraType != TokenType::EOF_)
+    {
+        const bool extraOk = extraType == TokenType::VEC_REGISTER
+                                 ? isPlainVr(n + 1)
+                                 : on(n + 1, TokenType::GP_REGISTER);
+        if (!(on(n, TokenType::COMMA) && extraOk))
+        {
+            return false;
+        }
+        extraAt = n + 1;
+        n += 2;
+    }
+    bool masked = false;
+    if (on(n, TokenType::COMMA) && on(n + 1, TokenType::VEC_REGISTER) &&
+        peekToken(n + 1).value == "v0.t" && endsAt(n + 2))
+    {
+        masked = true;
+    }
+    else if (!endsAt(n))
+    {
+        return false;
+    }
+
+    auto fail = [&](const Token &at, const std::string &title, const std::string &detail)
+    {
+        recordError(ParseError(at.line_number, title));
+        errors_.all_errors.emplace_back(errors::SyntaxError(title, detail, filename_,
+                                                            at.line_number, at.column_number,
+                                                            GetLineFromFile(filename_,
+                                                                            at.line_number)));
+        skipCurrentLine();
+        return true;
+    };
+
+    if (hasOffset && std::stoll(peekToken(3).value) != 0)
+    {
+        recordError(ParseError(peekToken(3).line_number, "Immediate value out of range"));
+        errors_.all_errors.emplace_back(errors::ImmediateOutOfRangeError(
+            "Immediate value out of range", "Vector loads/stores take no offset: expected 0",
+            filename_, peekToken(3).line_number, peekToken(3).column_number,
+            GetLineFromFile(filename_, peekToken(3).line_number)));
+        skipCurrentLine();
+        return true;
+    }
+
+    const rvv::VectorMemFields &fields = *rvv::LookupVectorMemMnemonic(currentToken().value);
+    const Token &data = peekToken(1);
+    const uint32_t dataReg = static_cast<uint32_t>(std::stoul(data.value.substr(1)));
+    if (masked && (fields.mode == rvv::VectorMemMode::Mask ||
+                   fields.mode == rvv::VectorMemMode::WholeRegister))
+    {
+        return fail(peekToken(n + 1), "Instruction cannot be masked",
+                    currentToken().value + " is always unmasked");
+    }
+    if (masked && !fields.isStore && dataReg == 0)
+    {
+        return fail(data, "Destination overlaps the mask register",
+                    "A masked instruction (v0.t) cannot write v0");
+    }
+    if (fields.mode == rvv::VectorMemMode::WholeRegister && dataReg % fields.nfields != 0)
+    {
+        return fail(data, "Misaligned register group",
+                    currentToken().value + " needs a register number that is a multiple of " +
+                        std::to_string(fields.nfields));
+    }
+
+    ICUnit block;
+    block.setOpcode(currentToken().value);
+    block.setLineNumber(line);
+    block.setInstructionIndex(instruction_index_);
+    block.setRd(data.value);
+    block.setRs1(reg_alias_to_name.at(peekToken(rs1At).value));
+    if (extraAt >= 0)
+    {
+        const std::string &extra = peekToken(extraAt).value;
+        block.setRs2(extraType == TokenType::GP_REGISTER ? reg_alias_to_name.at(extra) : extra);
+    }
+    block.setVm(masked ? 0 : 1);
+
+    skipCurrentLine();
+    intermediate_code_.emplace_back(block, true);
+    instruction_number_line_number_mapping_[instruction_index_] = block.getLineNumber();
+    instruction_index_++;
+    return true;
+}
+
+bool Parser::parse_O_VR_C_LP_GPR_RP()
+{
+    return parseVectorMemory(TokenType::EOF_);
+}
+
+bool Parser::parse_O_VR_C_LP_GPR_RP_C_GPR()
+{
+    return parseVectorMemory(TokenType::GP_REGISTER);
+}
+
+bool Parser::parse_O_VR_C_LP_GPR_RP_C_VR()
+{
+    return parseVectorMemory(TokenType::VEC_REGISTER);
 }
 } // namespace Kites

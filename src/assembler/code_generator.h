@@ -341,6 +341,7 @@ uint32_t generateCSRRTypeMachineCode(const ICUnit &block);
 uint32_t generateCSRITypeMachineCode(const ICUnit &block);
 uint32_t generateVsetMachineCode(const ICUnit &block);
 uint32_t generateVectorArithMachineCode(const ICUnit &block);
+uint32_t generateVectorMemoryMachineCode(const ICUnit &block);
 
 uint32_t generateFDRTypeMachineCode(const ICUnit &block);
 uint32_t generateFDR1TypeMachineCode(const ICUnit &block);

@@ -10,6 +10,7 @@
 
 #include "processor/processor_base.h"
 #include "processor/registers.h"
+#include "processor/vector/vector_memory.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -308,10 +309,16 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
 }
 } // namespace
 
+bool IsVectorInstruction(uint32_t instruction)
+{
+    return (instruction & 0x7F) == OPCODE_OP_V || IsVectorMemoryInstruction(instruction);
+}
+
 bool IsSupportedVectorInstruction(uint32_t instruction)
 {
+    VectorMemFields memFields;
     return DecodeVsetKind(instruction) != VsetKind::None ||
-           DecodeVectorArith(instruction) != nullptr;
+           DecodeVectorArith(instruction) != nullptr || DecodeVectorMem(instruction, memFields);
 }
 
 bool VectorInstructionWritesGpr(uint32_t instruction)
@@ -321,9 +328,18 @@ bool VectorInstructionWritesGpr(uint32_t instruction)
 
 VectorExecResult ExecuteVectorInstruction(uint32_t instruction, uint64_t rs1Value,
                                           uint64_t rs2Value, RegisterFile &registers,
-                                          std::vector<RegisterChange> &changes)
+                                          MemoryController &memory,
+                                          std::vector<RegisterChange> &changes,
+                                          std::vector<MemoryChange> &memoryChanges)
 {
     VectorExecResult result;
+    if (IsVectorMemoryInstruction(instruction))
+    {
+        // Vector loads/stores (LOAD-FP/STORE-FP with a vector width): see vector_memory.cpp.
+        ExecuteVectorMemory(instruction, rs1Value, rs2Value, registers, memory, changes,
+                            memoryChanges);
+        return result;
+    }
     if (DecodeVsetKind(instruction) != VsetKind::None)
     {
         const VsetResult vset = ExecuteVset(instruction, rs1Value, rs2Value, registers);
