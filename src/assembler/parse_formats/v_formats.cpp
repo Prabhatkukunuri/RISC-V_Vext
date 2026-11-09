@@ -199,7 +199,7 @@ bool Parser::parse_O_GPR_C_I_C_VTYPE()
     instruction_index_++;
     return true;
 }
-bool Parser::parseVectorArith(TokenType sourceType)
+bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
 {
     const unsigned int line = currentToken().line_number;
     auto on = [&](int n, TokenType type)
@@ -207,24 +207,33 @@ bool Parser::parseVectorArith(TokenType sourceType)
     auto endsAt = [&](int n)
     { return peekToken(n).type == TokenType::EOF_ || peekToken(n).line_number != line; };
 
-    // vd , vs2 , <source> [, v0.t]
+    // vd , vs2 [, <source>] [, v0.t]
     if (!(on(1, TokenType::VEC_REGISTER) && on(2, TokenType::COMMA) &&
-          on(3, TokenType::VEC_REGISTER) && on(4, TokenType::COMMA) && on(5, sourceType)))
+          on(3, TokenType::VEC_REGISTER)))
     {
         return false;
     }
+    int end = 4; // first token after the operands
+    if (sourceType)
+    {
+        if (!(on(4, TokenType::COMMA) && on(5, *sourceType)))
+        {
+            return false;
+        }
+        end = 6;
+    }
     bool masked = false;
-    if (on(6, TokenType::COMMA) && on(7, TokenType::VEC_REGISTER) && peekToken(7).value == "v0.t" &&
-        endsAt(8))
+    if (on(end, TokenType::COMMA) && on(end + 1, TokenType::VEC_REGISTER) &&
+        peekToken(end + 1).value == "v0.t" && endsAt(end + 2))
     {
         masked = true;
     }
-    else if (!endsAt(6))
+    else if (!endsAt(end))
     {
         return false;
     }
     // "v0.t" is only valid as the mask operand.
-    for (int n : {1, 3, 5})
+    for (int n = 1; n < end; n += 2)
     {
         if (peekToken(n).value == "v0.t")
         {
@@ -232,29 +241,53 @@ bool Parser::parseVectorArith(TokenType sourceType)
         }
     }
 
-    if (masked && peekToken(1).value == "v0")
+    auto reject = [&](const Token &at, const std::string &title, const std::string &detail)
     {
-        const Token &vd = peekToken(1);
-        recordError(ParseError(vd.line_number, "Destination overlaps the mask register"));
-        errors_.all_errors.emplace_back(errors::SyntaxError(
-            "Destination overlaps the mask register",
-            "A masked instruction (v0.t) cannot write v0", filename_, vd.line_number,
-            vd.column_number, GetLineFromFile(filename_, vd.line_number)));
+        recordError(ParseError(at.line_number, title));
+        errors_.all_errors.emplace_back(errors::SyntaxError(title, detail, filename_,
+                                                            at.line_number, at.column_number,
+                                                            GetLineFromFile(filename_, at.line_number)));
         skipCurrentLine();
         return true;
+    };
+
+    const Token &vd = peekToken(1);
+    const Token &vs2 = peekToken(3);
+    if (masked && vd.value == "v0")
+    {
+        return reject(vd, "Destination overlaps the mask register",
+                      "A masked instruction (v0.t) cannot write v0");
+    }
+
+    // Overlaps that are illegal at every LMUL: the destination can't start on a source with a
+    // narrower element width. (Overlaps that depend on LMUL are checked when it runs.)
+    if (const rvv::VectorArithInfo *info = rvv::FindVectorArith(currentToken().value))
+    {
+        const bool narrowVs2 = info->shape == rvv::VectorOpShape::Widening ||
+                               info->shape == rvv::VectorOpShape::Extension;
+        const bool narrowVs1 = (info->shape == rvv::VectorOpShape::Widening ||
+                                info->shape == rvv::VectorOpShape::WideningW) &&
+                               sourceType == TokenType::VEC_REGISTER;
+        if ((narrowVs2 && vd.value == vs2.value) ||
+            (narrowVs1 && vd.value == peekToken(5).value))
+        {
+            return reject(vd, "Destination overlaps a source",
+                          "vd cannot be the same register as a source with a narrower element "
+                          "width");
+        }
     }
 
     ICUnit block;
     block.setOpcode(currentToken().value);
     block.setLineNumber(line);
     block.setInstructionIndex(instruction_index_);
-    block.setRd(peekToken(1).value);
-    block.setRs2(peekToken(3).value);
+    block.setRd(vd.value);
+    block.setRs2(vs2.value);
     block.setVm(masked ? 0 : 1);
 
-    const Token &source = peekToken(5);
     if (sourceType == TokenType::NUM)
     {
+        const Token &source = peekToken(5);
         const int64_t imm = std::stoll(source.value);
         if (imm < -16 || imm > 15)
         {
@@ -270,11 +303,11 @@ bool Parser::parseVectorArith(TokenType sourceType)
     }
     else if (sourceType == TokenType::GP_REGISTER)
     {
-        block.setRs1(reg_alias_to_name.at(source.value));
+        block.setRs1(reg_alias_to_name.at(peekToken(5).value));
     }
-    else
+    else if (sourceType == TokenType::VEC_REGISTER)
     {
-        block.setRs1(source.value);
+        block.setRs1(peekToken(5).value);
     }
 
     skipCurrentLine();
@@ -297,5 +330,10 @@ bool Parser::parse_O_VR_C_VR_C_GPR()
 bool Parser::parse_O_VR_C_VR_C_I()
 {
     return parseVectorArith(TokenType::NUM);
+}
+
+bool Parser::parse_O_VR_C_VR()
+{
+    return parseVectorArith(std::nullopt);
 }
 } // namespace Kites

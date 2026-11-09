@@ -52,19 +52,38 @@ uint64_t VsetImmediateVtype(uint32_t instruction);
  */
 enum class VectorArithOp
 {
-    Add,  ///< vd[i] = vs2[i] + src
-    Sub,  ///< vd[i] = vs2[i] - src
-    Rsub, ///< vd[i] = src - vs2[i]
+    Add,    ///< vd[i] = vs2[i] + src
+    Sub,    ///< vd[i] = vs2[i] - src
+    Rsub,   ///< vd[i] = src - vs2[i]
+    And,    ///< vd[i] = vs2[i] & src
+    Or,     ///< vd[i] = vs2[i] | src
+    Xor,    ///< vd[i] = vs2[i] ^ src
+    Extend, ///< vd[i] = extend(vs2[i]) (vzext/vsext, no second source)
 };
 
 /**
- * @brief One supported OP-V arithmetic encoding (a funct6 + funct3 pair).
+ * @brief Element widths of an instruction's operands, relative to SEW.
+ */
+enum class VectorOpShape
+{
+    SingleWidth, ///< vd, vs2 and the source are all SEW wide
+    Widening,    ///< vd is 2*SEW, vs2 and the source are SEW (vwadd.vv, .vx, ...)
+    WideningW,   ///< vd and vs2 are 2*SEW, the source is SEW (vwadd.wv, .wx, ...)
+    Extension,   ///< vd is SEW, vs2 is SEW/factor (vzext.vf2, vsext.vf8, ...)
+};
+
+/**
+ * @brief One supported OP-V arithmetic encoding.
  */
 struct VectorArithInfo
 {
     uint32_t funct6;
     uint32_t funct3;
+    int vs1Field; ///< Fixed vs1 field that picks the op (vzext/vsext), or -1 if it's an operand.
     VectorArithOp op;
+    VectorOpShape shape;
+    bool isSigned; ///< Narrow operands are sign-extended (vwadd, vsext), else zero-extended.
+    unsigned factor; ///< Extension: vs2 is SEW/factor wide. 1 otherwise.
     const char *mnemonic;
 };
 
@@ -72,6 +91,11 @@ struct VectorArithInfo
  * @brief Looks up an OP-V arithmetic word; nullptr if it isn't one this VM implements.
  */
 const VectorArithInfo *DecodeVectorArith(uint32_t instruction);
+
+/**
+ * @brief Looks up an implemented OP-V arithmetic instruction by mnemonic; nullptr if unknown.
+ */
+const VectorArithInfo *FindVectorArith(const std::string &mnemonic);
 
 /**
  * @brief The mnemonic of an implemented OP-V arithmetic word, or "" if there is none.

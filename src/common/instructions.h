@@ -200,7 +200,40 @@ enum class Instruction
     kvsub_vv,
     kvsub_vx,
     kvrsub_vx,
-    kvrsub_vi
+    kvrsub_vi,
+
+    // RVV widening add/subtract, integer extension, bitwise logical
+    kvwaddu_vv,
+    kvwaddu_vx,
+    kvwadd_vv,
+    kvwadd_vx,
+    kvwsubu_vv,
+    kvwsubu_vx,
+    kvwsub_vv,
+    kvwsub_vx,
+    kvwaddu_wv,
+    kvwaddu_wx,
+    kvwadd_wv,
+    kvwadd_wx,
+    kvwsubu_wv,
+    kvwsubu_wx,
+    kvwsub_wv,
+    kvwsub_wx,
+    kvzext_vf2,
+    kvsext_vf2,
+    kvzext_vf4,
+    kvsext_vf4,
+    kvzext_vf8,
+    kvsext_vf8,
+    kvand_vv,
+    kvand_vx,
+    kvand_vi,
+    kvor_vv,
+    kvor_vx,
+    kvor_vi,
+    kvxor_vv,
+    kvxor_vx,
+    kvxor_vi
 };
 
 // TODO: use enum class for instruction encoding
@@ -468,6 +501,7 @@ enum class SyntaxType
     O_VR_C_VR_C_VR,  ///< Opcode vector-register , vector-register , vector-register (OPIVV)
     O_VR_C_VR_C_GPR, ///< Opcode vector-register , vector-register , general-register (OPIVX)
     O_VR_C_VR_C_I,   ///< Opcode vector-register , vector-register , simm5 (OPIVI)
+    O_VR_C_VR,       ///< Opcode vector-register , vector-register (vzext/vsext)
 };
 
 extern std::unordered_map<std::string, RTypeInstructionEncoding> R_type_instruction_encoding_map;

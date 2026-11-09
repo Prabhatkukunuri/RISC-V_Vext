@@ -16,6 +16,7 @@
 #include <map>
 #include <string>
 #include <variant>
+#include <optional>
 #include <vector>
 
 namespace Kites
@@ -154,11 +155,13 @@ class Parser
     bool parse_O_VR_C_VR_C_VR();
     bool parse_O_VR_C_VR_C_GPR();
     bool parse_O_VR_C_VR_C_I();
+    bool parse_O_VR_C_VR();
     /**
-     * @brief Shared parser for "op vd, vs2, <source>[, v0.t]". @p sourceType is the token type
-     * of the third operand: VEC_REGISTER (vs1), GP_REGISTER (rs1) or NUM (simm5).
+     * @brief Shared parser for "op vd, vs2[, <source>][, v0.t]". @p sourceType is the token type
+     * of the third operand: VEC_REGISTER (vs1), GP_REGISTER (rs1) or NUM (simm5), or nullopt for
+     * the two-operand forms (vzext/vsext).
      */
-    bool parseVectorArith(TokenType sourceType);
+    bool parseVectorArith(std::optional<TokenType> sourceType);
 
     bool parse_O_FPR_C_FPR_C_FPR_C_FPR();
     bool parse_O_FPR_C_FPR_C_FPR_C_FPR_C_RM();

@@ -269,11 +269,15 @@ uint32_t generateVectorArithMachineCode(const ICUnit &block)
     const uint32_t vd = extractRegisterIndex(block.getRd());
     const uint32_t vs2 = extractRegisterIndex(block.getRs2());
     uint32_t source;
-    if (encoding.funct3 == 0b011) // OPIVI: simm5
+    if (encoding.funct5 != -1) // vzext/vsext: a fixed vs1 field picks the variant
+    {
+        source = static_cast<uint32_t>(encoding.funct5);
+    }
+    else if (encoding.funct3 == 0b011) // OPIVI: simm5
     {
         source = static_cast<uint32_t>(std::stoi(block.getImm())) & 0x1F;
     }
-    else // OPIVV vs1 / OPIVX rs1
+    else // OPIVV/OPMVV vs1, OPIVX/OPMVX rs1
     {
         source = extractRegisterIndex(block.getRs1());
     }

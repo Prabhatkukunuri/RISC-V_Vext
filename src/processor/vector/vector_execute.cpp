@@ -11,6 +11,7 @@
 #include "processor/processor_base.h"
 #include "processor/registers.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -42,19 +43,66 @@ Vtype RequireValidVtype(uint32_t instruction, const RegisterFile &registers)
     return vtype;
 }
 
-/// Number of registers in a group: LMUL, or 1 for a fractional LMUL.
-size_t GroupSize(const Vtype &vtype)
+/// Registers in a group of EMUL = 2^emulLog2 (a fractional EMUL still occupies one register).
+int GroupRegs(int emulLog2)
 {
-    return vtype.lmulLog2 > 0 ? size_t{1} << vtype.lmulLog2 : 1;
+    return emulLog2 > 0 ? 1 << emulLog2 : 1;
 }
 
-void RequireAligned(uint32_t instruction, uint32_t reg, size_t group, const char *operand)
+void RequireAligned(uint32_t instruction, uint32_t reg, int emulLog2, const char *operand)
 {
+    const int group = GroupRegs(emulLog2);
     if (reg % group != 0)
     {
         ThrowIllegal(instruction, std::string(operand) + " v" + std::to_string(reg) +
-                                      " is not aligned to LMUL=" + std::to_string(group));
+                                      " is not aligned to a " + std::to_string(group) +
+                                      "-register group");
     }
+}
+
+// Spike's is_overlapped / is_overlapped_widen, sizes in registers.
+bool IsOverlapped(int a, int aSize, int b, int bSize)
+{
+    return std::max(a + aSize, b + bSize) - std::min(a, b) < aSize + bSize;
+}
+
+bool IsOverlappedWiden(int a, int aSize, int b, int bSize)
+{
+    // A narrower source may sit in the highest-numbered part of the destination group.
+    if (a < b && IsOverlapped(a, aSize, b, bSize) && !IsOverlapped(a, aSize, b + bSize, bSize))
+    {
+        return false;
+    }
+    return IsOverlapped(a, aSize, b, bSize);
+}
+
+/// A destination wider than its source may overlap it only in the destination's
+/// highest-numbered part, and only when the source group is at least one whole register.
+void RequireWideningOverlapOk(uint32_t instruction, uint32_t vd, int destLog2, uint32_t source,
+                              int sourceLog2, const char *operand)
+{
+    const int destSize = GroupRegs(destLog2);
+    const int sourceSize = GroupRegs(sourceLog2);
+    const bool overlaps = sourceLog2 < 0
+                              ? IsOverlapped(vd, destSize, source, sourceSize)
+                              : IsOverlappedWiden(vd, destSize, source, sourceSize);
+    if (overlaps)
+    {
+        ThrowIllegal(instruction, "vd overlaps " + std::string(operand) +
+                                      ", which has a different element width");
+    }
+}
+
+/// value, an element @p bits wide, extended to 64 bits.
+uint64_t Extend(uint64_t value, uint64_t bits, bool isSigned)
+{
+    value &= SewMask(bits);
+    if (!isSigned || bits == 64)
+    {
+        return value;
+    }
+    const uint64_t signBit = 1ULL << (bits - 1);
+    return (value ^ signBit) - signBit;
 }
 
 /// Snapshots a destination register group so its changes can be recorded for undo.
@@ -111,35 +159,118 @@ uint64_t ApplyArith(VectorArithOp op, uint64_t vs2Element, uint64_t source)
         return vs2Element - source;
     case VectorArithOp::Rsub:
         return source - vs2Element;
+    case VectorArithOp::And:
+        return vs2Element & source;
+    case VectorArithOp::Or:
+        return vs2Element | source;
+    case VectorArithOp::Xor:
+        return vs2Element ^ source;
+    case VectorArithOp::Extend:
+        return vs2Element;
     }
     return 0;
 }
 
-/// vd[i] = op(vs2[i], vs1[i] | x[rs1] | simm5) for the active elements in [vstart, vl).
+/// Element width (bits) and register group size (log2 EMUL) of one operand.
+struct OperandLayout
+{
+    uint64_t eew;
+    int emulLog2;
+};
+
+/**
+ * vd[i] = op(vs2[i], vs1[i] | x[rs1] | simm5) for the active elements in [vstart, vl), with the
+ * operand widths given by info.shape:
+ *   SingleWidth  vd SEW   = vs2 SEW   op src SEW
+ *   Widening     vd 2SEW  = vs2 SEW   op src SEW   (narrow operands extended first)
+ *   WideningW    vd 2SEW  = vs2 2SEW  op src SEW
+ *   Extension    vd SEW   = extend(vs2 SEW/factor)
+ */
 void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint64_t rs1Value,
                          RegisterFile &registers, std::vector<RegisterChange> &changes)
 {
     const uint32_t vd = (instruction >> 7) & 0x1F;
-    const uint32_t field19_15 = (instruction >> 15) & 0x1F; // vs1, rs1 or simm5
+    const uint32_t field19_15 = (instruction >> 15) & 0x1F; // vs1, rs1, simm5 or selector
     const uint32_t vs2 = (instruction >> 20) & 0x1F;
     const bool masked = ((instruction >> 25) & 1) == 0;
+    const bool sourceIsVector = info.vs1Field < 0 && (info.funct3 == FUNCT3_OPIVV ||
+                                                      info.funct3 == FUNCT3_OPMVV);
+    const bool hasSource = info.shape != VectorOpShape::Extension;
 
     const Vtype vtype = RequireValidVtype(instruction, registers);
-    const size_t group = GroupSize(vtype);
+    const uint64_t sew = vtype.sew;
+    const int lmul = vtype.lmulLog2;
+
+    OperandLayout dest{sew, lmul};
+    OperandLayout src2{sew, lmul};
+    const OperandLayout src1{sew, lmul};
+    switch (info.shape)
+    {
+    case VectorOpShape::SingleWidth:
+        break;
+    case VectorOpShape::Widening:
+        dest = {2 * sew, lmul + 1};
+        break;
+    case VectorOpShape::WideningW:
+        dest = {2 * sew, lmul + 1};
+        src2 = {2 * sew, lmul + 1};
+        break;
+    case VectorOpShape::Extension:
+    {
+        int factorLog2 = 0;
+        while ((1u << factorLog2) < info.factor)
+        {
+            ++factorLog2;
+        }
+        src2 = {sew / info.factor, lmul - factorLog2};
+        break;
+    }
+    }
+
+    // Widths and group sizes this implementation can't hold (Spike's checks).
+    if (dest.eew > ELEN)
+    {
+        ThrowIllegal(instruction, "2*SEW = " + std::to_string(dest.eew) + " exceeds ELEN = 64");
+    }
+    if (dest.emulLog2 > 3)
+    {
+        ThrowIllegal(instruction, "destination EMUL would exceed 8");
+    }
+    if (src2.eew < 8 || src2.emulLog2 < -3)
+    {
+        ThrowIllegal(instruction, "source EEW SEW/" + std::to_string(info.factor) +
+                                      " is below 8 bits or EMUL below 1/8");
+    }
+
     if (masked && vd == 0)
     {
         ThrowIllegal(instruction, "a masked instruction cannot write v0");
     }
-    RequireAligned(instruction, vd, group, "vd");
-    RequireAligned(instruction, vs2, group, "vs2");
-    if (info.funct3 == FUNCT3_OPIVV)
+    RequireAligned(instruction, vd, dest.emulLog2, "vd");
+    RequireAligned(instruction, vs2, src2.emulLog2, "vs2");
+    if (sourceIsVector)
     {
-        RequireAligned(instruction, field19_15, group, "vs1");
+        RequireAligned(instruction, field19_15, src1.emulLog2, "vs1");
     }
 
-    // The scalar operand, truncated (or sign-extended, for simm5) to SEW.
+    // Overlap between operands of different element widths.
+    if (info.shape == VectorOpShape::Extension && vd == vs2)
+    {
+        ThrowIllegal(instruction, "vd cannot be the same register as vs2");
+    }
+    if (dest.eew != src2.eew)
+    {
+        RequireWideningOverlapOk(instruction, vd, dest.emulLog2, vs2, src2.emulLog2, "vs2");
+    }
+    if (sourceIsVector && dest.eew != src1.eew)
+    {
+        RequireWideningOverlapOk(instruction, vd, dest.emulLog2, field19_15, src1.emulLog2,
+                                 "vs1");
+    }
+
+    // The scalar operand: x[rs1], or simm5 sign-extended (both used at SEW bits).
     uint64_t scalar = 0;
-    if (info.funct3 == FUNCT3_OPIVX)
+    if (info.funct3 == FUNCT3_OPIVX || info.funct3 == FUNCT3_OPMVX)
     {
         scalar = rs1Value;
     }
@@ -151,20 +282,26 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
 
     const uint64_t vl = registers.ReadCsr(RegisterFile::CSR_VL);
     const uint64_t vstart = registers.ReadCsr(RegisterFile::CSR_VSTART);
-    const uint64_t mask = SewMask(vtype.sew);
 
-    DestinationRecorder recorder(registers, vd, group);
+    DestinationRecorder recorder(registers, vd, GroupRegs(dest.emulLog2));
     for (uint64_t i = vstart; i < vl; ++i)
     {
         if (masked && !registers.ReadMaskBit(0, i))
         {
             continue; // masked-off: undisturbed
         }
-        const uint64_t a = registers.ReadVectorElement(vs2, i, vtype.sew);
-        const uint64_t b = info.funct3 == FUNCT3_OPIVV
-                               ? registers.ReadVectorElement(field19_15, i, vtype.sew)
-                               : scalar & mask;
-        registers.WriteVectorElement(vd, i, vtype.sew, ApplyArith(info.op, a, b) & mask);
+        // Narrow operands are sign- or zero-extended to the destination width first.
+        const uint64_t a =
+            Extend(registers.ReadVectorElement(vs2, i, src2.eew), src2.eew, info.isSigned);
+        uint64_t b = 0;
+        if (hasSource)
+        {
+            const uint64_t raw =
+                sourceIsVector ? registers.ReadVectorElement(field19_15, i, src1.eew) : scalar;
+            b = Extend(raw, src1.eew, info.isSigned);
+        }
+        registers.WriteVectorElement(vd, i, dest.eew,
+                                     ApplyArith(info.op, a, b) & SewMask(dest.eew));
     }
     recorder.Record(changes);
     ClearVstart(registers, changes);

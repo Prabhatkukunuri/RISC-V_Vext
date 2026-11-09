@@ -192,6 +192,40 @@ std::unordered_map<Instruction, InstructionEncoding> instruction_encoding_map = 
     {Instruction::kvrsub_vx, {0b1010111, -1, 0b100, -1, 0b000011, -1}},
     {Instruction::kvrsub_vi, {0b1010111, -1, 0b011, -1, 0b000011, -1}},
 
+    // Widening add/subtract (OPMVV 010, OPMVX 110), integer extension (VXUNARY0: funct5 holds
+    // the fixed vs1 field that selects the variant), bitwise logical (OPIVV/OPIVX/OPIVI).
+    {Instruction::kvwaddu_vv, {0b1010111, -1, 0b010, -1, 0b110000, -1}},
+    {Instruction::kvwaddu_vx, {0b1010111, -1, 0b110, -1, 0b110000, -1}},
+    {Instruction::kvwadd_vv, {0b1010111, -1, 0b010, -1, 0b110001, -1}},
+    {Instruction::kvwadd_vx, {0b1010111, -1, 0b110, -1, 0b110001, -1}},
+    {Instruction::kvwsubu_vv, {0b1010111, -1, 0b010, -1, 0b110010, -1}},
+    {Instruction::kvwsubu_vx, {0b1010111, -1, 0b110, -1, 0b110010, -1}},
+    {Instruction::kvwsub_vv, {0b1010111, -1, 0b010, -1, 0b110011, -1}},
+    {Instruction::kvwsub_vx, {0b1010111, -1, 0b110, -1, 0b110011, -1}},
+    {Instruction::kvwaddu_wv, {0b1010111, -1, 0b010, -1, 0b110100, -1}},
+    {Instruction::kvwaddu_wx, {0b1010111, -1, 0b110, -1, 0b110100, -1}},
+    {Instruction::kvwadd_wv, {0b1010111, -1, 0b010, -1, 0b110101, -1}},
+    {Instruction::kvwadd_wx, {0b1010111, -1, 0b110, -1, 0b110101, -1}},
+    {Instruction::kvwsubu_wv, {0b1010111, -1, 0b010, -1, 0b110110, -1}},
+    {Instruction::kvwsubu_wx, {0b1010111, -1, 0b110, -1, 0b110110, -1}},
+    {Instruction::kvwsub_wv, {0b1010111, -1, 0b010, -1, 0b110111, -1}},
+    {Instruction::kvwsub_wx, {0b1010111, -1, 0b110, -1, 0b110111, -1}},
+    {Instruction::kvzext_vf2, {0b1010111, -1, 0b010, 0b00110, 0b010010, -1}},
+    {Instruction::kvsext_vf2, {0b1010111, -1, 0b010, 0b00111, 0b010010, -1}},
+    {Instruction::kvzext_vf4, {0b1010111, -1, 0b010, 0b00100, 0b010010, -1}},
+    {Instruction::kvsext_vf4, {0b1010111, -1, 0b010, 0b00101, 0b010010, -1}},
+    {Instruction::kvzext_vf8, {0b1010111, -1, 0b010, 0b00010, 0b010010, -1}},
+    {Instruction::kvsext_vf8, {0b1010111, -1, 0b010, 0b00011, 0b010010, -1}},
+    {Instruction::kvand_vv, {0b1010111, -1, 0b000, -1, 0b001001, -1}},
+    {Instruction::kvand_vx, {0b1010111, -1, 0b100, -1, 0b001001, -1}},
+    {Instruction::kvand_vi, {0b1010111, -1, 0b011, -1, 0b001001, -1}},
+    {Instruction::kvor_vv, {0b1010111, -1, 0b000, -1, 0b001010, -1}},
+    {Instruction::kvor_vx, {0b1010111, -1, 0b100, -1, 0b001010, -1}},
+    {Instruction::kvor_vi, {0b1010111, -1, 0b011, -1, 0b001010, -1}},
+    {Instruction::kvxor_vv, {0b1010111, -1, 0b000, -1, 0b001011, -1}},
+    {Instruction::kvxor_vx, {0b1010111, -1, 0b100, -1, 0b001011, -1}},
+    {Instruction::kvxor_vi, {0b1010111, -1, 0b011, -1, 0b001011, -1}},
+
     {Instruction::kfmadd_s, {0b1000011, 0b00, -1, -1, -1, -1}},
     {Instruction::kfmsub_s, {0b1000111, 0b00, -1, -1, -1, -1}},
     {Instruction::kfnmsub_s, {0b1001011, 0b00, -1, -1, -1, -1}},
@@ -362,6 +396,38 @@ std::unordered_map<std::string, Instruction> instruction_string_map = {
     {"vrsub.vx", Instruction::kvrsub_vx},
     {"vrsub.vi", Instruction::kvrsub_vi},
 
+    {"vwaddu.vv", Instruction::kvwaddu_vv},
+    {"vwaddu.vx", Instruction::kvwaddu_vx},
+    {"vwadd.vv", Instruction::kvwadd_vv},
+    {"vwadd.vx", Instruction::kvwadd_vx},
+    {"vwsubu.vv", Instruction::kvwsubu_vv},
+    {"vwsubu.vx", Instruction::kvwsubu_vx},
+    {"vwsub.vv", Instruction::kvwsub_vv},
+    {"vwsub.vx", Instruction::kvwsub_vx},
+    {"vwaddu.wv", Instruction::kvwaddu_wv},
+    {"vwaddu.wx", Instruction::kvwaddu_wx},
+    {"vwadd.wv", Instruction::kvwadd_wv},
+    {"vwadd.wx", Instruction::kvwadd_wx},
+    {"vwsubu.wv", Instruction::kvwsubu_wv},
+    {"vwsubu.wx", Instruction::kvwsubu_wx},
+    {"vwsub.wv", Instruction::kvwsub_wv},
+    {"vwsub.wx", Instruction::kvwsub_wx},
+    {"vzext.vf2", Instruction::kvzext_vf2},
+    {"vsext.vf2", Instruction::kvsext_vf2},
+    {"vzext.vf4", Instruction::kvzext_vf4},
+    {"vsext.vf4", Instruction::kvsext_vf4},
+    {"vzext.vf8", Instruction::kvzext_vf8},
+    {"vsext.vf8", Instruction::kvsext_vf8},
+    {"vand.vv", Instruction::kvand_vv},
+    {"vand.vx", Instruction::kvand_vx},
+    {"vand.vi", Instruction::kvand_vi},
+    {"vor.vv", Instruction::kvor_vv},
+    {"vor.vx", Instruction::kvor_vx},
+    {"vor.vi", Instruction::kvor_vi},
+    {"vxor.vv", Instruction::kvxor_vv},
+    {"vxor.vx", Instruction::kvxor_vx},
+    {"vxor.vi", Instruction::kvxor_vi},
+
     {"fmadd.s", Instruction::kfmadd_s},
     {"fmsub.s", Instruction::kfmsub_s},
     {"fnmsub.s", Instruction::kfnmsub_s},
@@ -409,7 +475,12 @@ static const std::unordered_set<std::string> valid_instructions = {
     "vsetvli", "vsetivli", "vsetvl",
 
     // RVV integer arithmetic
-    "vadd.vv", "vadd.vx", "vadd.vi", "vsub.vv", "vsub.vx", "vrsub.vx", "vrsub.vi"
+    "vadd.vv", "vadd.vx", "vadd.vi", "vsub.vv", "vsub.vx", "vrsub.vx", "vrsub.vi",
+    "vwaddu.vv", "vwaddu.vx", "vwadd.vv", "vwadd.vx", "vwsubu.vv", "vwsubu.vx", "vwsub.vv",
+    "vwsub.vx", "vwaddu.wv", "vwaddu.wx", "vwadd.wv", "vwadd.wx", "vwsubu.wv", "vwsubu.wx",
+    "vwsub.wv", "vwsub.wx", "vzext.vf2", "vsext.vf2", "vzext.vf4", "vsext.vf4", "vzext.vf8",
+    "vsext.vf8", "vand.vv", "vand.vx", "vand.vi", "vor.vv", "vor.vx", "vor.vi", "vxor.vv",
+    "vxor.vx", "vxor.vi"
 
 };
 
@@ -499,7 +570,12 @@ static const std::unordered_set<std::string> VsetInstructions = {"vsetvli", "vse
                                                                  "vsetvl"};
 
 static const std::unordered_set<std::string> VectorArithInstructions = {
-    "vadd.vv", "vadd.vx", "vadd.vi", "vsub.vv", "vsub.vx", "vrsub.vx", "vrsub.vi"};
+    "vadd.vv", "vadd.vx", "vadd.vi", "vsub.vv", "vsub.vx", "vrsub.vx", "vrsub.vi",
+    "vwaddu.vv", "vwaddu.vx", "vwadd.vv", "vwadd.vx", "vwsubu.vv", "vwsubu.vx", "vwsub.vv",
+    "vwsub.vx", "vwaddu.wv", "vwaddu.wx", "vwadd.wv", "vwadd.wx", "vwsubu.wv", "vwsubu.wx",
+    "vwsub.wv", "vwsub.wx", "vzext.vf2", "vsext.vf2", "vzext.vf4", "vsext.vf4", "vzext.vf8",
+    "vsext.vf8", "vand.vv", "vand.vx", "vand.vi", "vor.vv", "vor.vx", "vor.vi", "vxor.vv",
+    "vxor.vx", "vxor.vi"};
 
 static const std::unordered_set<std::string> MExtensionInstructions = {
     "mul",  "mulh", "mulhsu", "mulhu", "div",  "divu", "rem",
@@ -1018,6 +1094,38 @@ std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map 
     {"vsub.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
     {"vrsub.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
     {"vrsub.vi", {SyntaxType::O_VR_C_VR_C_I}},
+
+    {"vwaddu.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vwaddu.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vwadd.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vwadd.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vwsubu.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vwsubu.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vwsub.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vwsub.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vwaddu.wv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vwaddu.wx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vwadd.wv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vwadd.wx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vwsubu.wv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vwsubu.wx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vwsub.wv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vwsub.wx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vzext.vf2", {SyntaxType::O_VR_C_VR}},
+    {"vsext.vf2", {SyntaxType::O_VR_C_VR}},
+    {"vzext.vf4", {SyntaxType::O_VR_C_VR}},
+    {"vsext.vf4", {SyntaxType::O_VR_C_VR}},
+    {"vzext.vf8", {SyntaxType::O_VR_C_VR}},
+    {"vsext.vf8", {SyntaxType::O_VR_C_VR}},
+    {"vand.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vand.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vand.vi", {SyntaxType::O_VR_C_VR_C_I}},
+    {"vor.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vor.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vor.vi", {SyntaxType::O_VR_C_VR_C_I}},
+    {"vxor.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vxor.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vxor.vi", {SyntaxType::O_VR_C_VR_C_I}},
 };
 
 bool isValidInstruction(const std::string &instruction)
@@ -1272,6 +1380,7 @@ std::string getExpectedSyntaxes(const std::string &opcode)
         {SyntaxType::O_VR_C_VR_C_VR, "<v-reg>, <v-reg>, <v-reg>[, v0.t]"},
         {SyntaxType::O_VR_C_VR_C_GPR, "<v-reg>, <v-reg>, <gp-reg>[, v0.t]"},
         {SyntaxType::O_VR_C_VR_C_I, "<v-reg>, <v-reg>, <simm5>[, v0.t]"},
+        {SyntaxType::O_VR_C_VR, "<v-reg>, <v-reg>[, v0.t]"},
     };
 
     std::string syntaxes;
@@ -1882,26 +1991,32 @@ std::string disassemble(uint32_t instruction)
             break;
         }
 
-        // Arithmetic: name vd, vs2, <vs1 | rs1 | simm5>[, v0.t]
-        const std::string name = rvv::VectorArithMnemonic(instruction);
-        if (name.empty())
+        // Arithmetic: name vd, vs2[, vs1 | rs1 | simm5][, v0.t]
+        const rvv::VectorArithInfo *info = rvv::DecodeVectorArith(instruction);
+        if (!info)
             break;
         auto vr = [](uint8_t r) { return "v" + std::to_string(r); };
         std::string source;
-        switch (funct3)
+        if (info->vs1Field < 0) // vzext/vsext have no third operand
         {
-        case 0b000: // OPIVV
-            source = vr(rs1);
-            break;
-        case 0b100: // OPIVX
-            source = xr(rs1);
-            break;
-        default: // OPIVI
-            source = std::to_string(signext(rs1, 5));
-            break;
+            switch (funct3)
+            {
+            case rvv::FUNCT3_OPIVV:
+            case rvv::FUNCT3_OPMVV:
+                source = ", " + vr(rs1);
+                break;
+            case rvv::FUNCT3_OPIVX:
+            case rvv::FUNCT3_OPMVX:
+                source = ", " + xr(rs1);
+                break;
+            default: // OPIVI
+                source = ", " + std::to_string(signext(rs1, 5));
+                break;
+            }
         }
         const bool masked = ((instruction >> 25) & 1) == 0;
-        return name + " " + vr(rd) + ", " + vr(rs2) + ", " + source + (masked ? ", v0.t" : "");
+        return std::string(info->mnemonic) + " " + vr(rd) + ", " + vr(rs2) + source +
+               (masked ? ", v0.t" : "");
     }
 
     } // end switch

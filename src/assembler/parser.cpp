@@ -440,6 +440,12 @@ void Parser::parseTextDirective()
                     break;
                 }
 
+                case instruction_set::SyntaxType::O_VR_C_VR:
+                {
+                    valid_syntax = parse_O_VR_C_VR();
+                    break;
+                }
+
                 case instruction_set::SyntaxType::O_FPR_C_FPR_C_FPR_C_FPR:
                 {
                     valid_syntax = parse_O_FPR_C_FPR_C_FPR_C_FPR();
