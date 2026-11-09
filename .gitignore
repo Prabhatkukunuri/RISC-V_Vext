@@ -16,7 +16,9 @@ cmake-build-debug/
 TODO.md
 *.autosave
 CMakeLists.txt.user
-/vm_state
+# Kites writes run state (register/memory/error dumps) to vm_state/ under the directory it is
+# launched from, so ignore it anywhere in the tree.
+vm_state/
 .cph
 gtest_filter.
 .vs/
