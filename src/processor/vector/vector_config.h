@@ -58,6 +58,9 @@ enum class VectorArithOp
     And,    ///< vd[i] = vs2[i] & src
     Or,     ///< vd[i] = vs2[i] | src
     Xor,    ///< vd[i] = vs2[i] ^ src
+    Sll,    ///< vd[i] = vs2[i] << (src % SEW)
+    Srl,    ///< vd[i] = vs2[i] >> (src % SEW), zero-filling
+    Sra,    ///< vd[i] = vs2[i] >> (src % SEW), sign-filling
     Extend, ///< vd[i] = extend(vs2[i]) (vzext/vsext, no second source)
 };
 
@@ -86,6 +89,12 @@ struct VectorArithInfo
     unsigned factor; ///< Extension: vs2 is SEW/factor wide. 1 otherwise.
     const char *mnemonic;
 };
+
+/**
+ * @brief True if the .vi form takes an unsigned 5-bit immediate (uimm, 0..31) rather than a
+ * signed one (simm5, -16..15). So far: the shifts.
+ */
+bool HasUnsignedImmediate(const VectorArithInfo &info);
 
 /**
  * @brief Looks up an OP-V arithmetic word; nullptr if it isn't one this VM implements.

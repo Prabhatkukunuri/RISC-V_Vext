@@ -198,7 +198,16 @@
         "vor.vi",
         "vxor.vv",
         "vxor.vx",
-        "vxor.vi"
+        "vxor.vi",
+        "vsll.vv",
+        "vsll.vx",
+        "vsll.vi",
+        "vsrl.vv",
+        "vsrl.vx",
+        "vsrl.vi",
+        "vsra.vv",
+        "vsra.vx",
+        "vsra.vi"
     ],
     "PseudoInstruction": [
         "la",

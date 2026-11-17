@@ -226,6 +226,17 @@ std::unordered_map<Instruction, InstructionEncoding> instruction_encoding_map = 
     {Instruction::kvxor_vx, {0b1010111, -1, 0b100, -1, 0b001011, -1}},
     {Instruction::kvxor_vi, {0b1010111, -1, 0b011, -1, 0b001011, -1}},
 
+    // Single-width bit shifts (.vi takes an unsigned 5-bit immediate)
+    {Instruction::kvsll_vv, {0b1010111, -1, 0b000, -1, 0b100101, -1}},
+    {Instruction::kvsll_vx, {0b1010111, -1, 0b100, -1, 0b100101, -1}},
+    {Instruction::kvsll_vi, {0b1010111, -1, 0b011, -1, 0b100101, -1}},
+    {Instruction::kvsrl_vv, {0b1010111, -1, 0b000, -1, 0b101000, -1}},
+    {Instruction::kvsrl_vx, {0b1010111, -1, 0b100, -1, 0b101000, -1}},
+    {Instruction::kvsrl_vi, {0b1010111, -1, 0b011, -1, 0b101000, -1}},
+    {Instruction::kvsra_vv, {0b1010111, -1, 0b000, -1, 0b101001, -1}},
+    {Instruction::kvsra_vx, {0b1010111, -1, 0b100, -1, 0b101001, -1}},
+    {Instruction::kvsra_vi, {0b1010111, -1, 0b011, -1, 0b101001, -1}},
+
     {Instruction::kfmadd_s, {0b1000011, 0b00, -1, -1, -1, -1}},
     {Instruction::kfmsub_s, {0b1000111, 0b00, -1, -1, -1, -1}},
     {Instruction::kfnmsub_s, {0b1001011, 0b00, -1, -1, -1, -1}},
@@ -428,6 +439,16 @@ std::unordered_map<std::string, Instruction> instruction_string_map = {
     {"vxor.vx", Instruction::kvxor_vx},
     {"vxor.vi", Instruction::kvxor_vi},
 
+    {"vsll.vv", Instruction::kvsll_vv},
+    {"vsll.vx", Instruction::kvsll_vx},
+    {"vsll.vi", Instruction::kvsll_vi},
+    {"vsrl.vv", Instruction::kvsrl_vv},
+    {"vsrl.vx", Instruction::kvsrl_vx},
+    {"vsrl.vi", Instruction::kvsrl_vi},
+    {"vsra.vv", Instruction::kvsra_vv},
+    {"vsra.vx", Instruction::kvsra_vx},
+    {"vsra.vi", Instruction::kvsra_vi},
+
     {"fmadd.s", Instruction::kfmadd_s},
     {"fmsub.s", Instruction::kfmsub_s},
     {"fnmsub.s", Instruction::kfnmsub_s},
@@ -480,7 +501,9 @@ static const std::unordered_set<std::string> valid_instructions = {
     "vwsub.vx", "vwaddu.wv", "vwaddu.wx", "vwadd.wv", "vwadd.wx", "vwsubu.wv", "vwsubu.wx",
     "vwsub.wv", "vwsub.wx", "vzext.vf2", "vsext.vf2", "vzext.vf4", "vsext.vf4", "vzext.vf8",
     "vsext.vf8", "vand.vv", "vand.vx", "vand.vi", "vor.vv", "vor.vx", "vor.vi", "vxor.vv",
-    "vxor.vx", "vxor.vi"
+    "vxor.vx", "vxor.vi",
+    "vsll.vv", "vsll.vx", "vsll.vi", "vsrl.vv", "vsrl.vx", "vsrl.vi",
+    "vsra.vv", "vsra.vx", "vsra.vi"
 
 };
 
@@ -575,7 +598,9 @@ static const std::unordered_set<std::string> VectorArithInstructions = {
     "vwsub.vx", "vwaddu.wv", "vwaddu.wx", "vwadd.wv", "vwadd.wx", "vwsubu.wv", "vwsubu.wx",
     "vwsub.wv", "vwsub.wx", "vzext.vf2", "vsext.vf2", "vzext.vf4", "vsext.vf4", "vzext.vf8",
     "vsext.vf8", "vand.vv", "vand.vx", "vand.vi", "vor.vv", "vor.vx", "vor.vi", "vxor.vv",
-    "vxor.vx", "vxor.vi"};
+    "vxor.vx", "vxor.vi",
+    "vsll.vv", "vsll.vx", "vsll.vi", "vsrl.vv", "vsrl.vx", "vsrl.vi",
+    "vsra.vv", "vsra.vx", "vsra.vi"};
 
 static const std::unordered_set<std::string> MExtensionInstructions = {
     "mul",  "mulh", "mulhsu", "mulhu", "div",  "divu", "rem",
@@ -1126,6 +1151,16 @@ std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map 
     {"vxor.vv", {SyntaxType::O_VR_C_VR_C_VR}},
     {"vxor.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
     {"vxor.vi", {SyntaxType::O_VR_C_VR_C_I}},
+
+    {"vsll.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vsll.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vsll.vi", {SyntaxType::O_VR_C_VR_C_I}},
+    {"vsrl.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vsrl.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vsrl.vi", {SyntaxType::O_VR_C_VR_C_I}},
+    {"vsra.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vsra.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vsra.vi", {SyntaxType::O_VR_C_VR_C_I}},
 };
 
 bool isValidInstruction(const std::string &instruction)
@@ -2009,8 +2044,10 @@ std::string disassemble(uint32_t instruction)
             case rvv::FUNCT3_OPMVX:
                 source = ", " + xr(rs1);
                 break;
-            default: // OPIVI
-                source = ", " + std::to_string(signext(rs1, 5));
+            default: // OPIVI: uimm for shifts, simm5 otherwise
+                source = ", " + std::to_string(rvv::HasUnsignedImmediate(*info)
+                                                   ? static_cast<int32_t>(rs1)
+                                                   : signext(rs1, 5));
                 break;
             }
         }

@@ -1,0 +1,480 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage[margin=1in]{geometry}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\def\UrlBreaks{\do\/\do\_\do\.}
+\def\UrlFont{\ttfamily}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    columns=fullflexible,
+    keepspaces=true,
+    frame=single,
+    breaklines=true,
+    commentstyle=\color{gray},
+    keywordstyle=\color{blue!60!black}
+}
+
+\title{Stage 2 Review}
+\author{EE23BTECH11032 Kaustubh Parag Khachane \\
+EE23BTECH11034 Prabhat Kukunuri}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Overview}
+The goal of this stage was to add a subset of the RISC-V Vector extension (Zve64x: integer-only
+vectors with elements up to 64 bits) to the Kites simulator, following the RVV 1.0
+specification. Spike, the official RISC-V reference simulator, was used as the golden reference
+wherever the specification leaves implementation choices open. Vector instructions execute on the
+single-cycle VM and on all four 5-stage pipelined VMs (with/without hazard detection, with/without
+forwarding).
+
+In total, 41 vector instructions are supported end to end: assembler, disassembler, single-cycle
+VM, all pipelined VMs, undo/redo and editor syntax highlighting. 43 files were changed
+(about 3,550 lines added). The test suite went from 33 of 133 tests passing on the original code
+to 197 of 197 passing, including 64 new vector tests.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|c|p{12cm}|}
+    \hline
+    \textbf{Commit} & \textbf{Content} \\
+    \hline
+    \texttt{5e6d94a} & Vector register file (v0--v31), the 7 vector CSRs, VLEN setting, undo/redo
+    support, register dump, build fixes \\
+    \hline
+    \texttt{2f58283} & Fix for 14 cache tests that passed sizes in words instead of bytes (test files
+    only) \\
+    \hline
+    \texttt{dffbb22} & The \texttt{vset*} family; \texttt{vadd}/\texttt{vsub}/\texttt{vrsub}; the
+    shared vector execution module; assembler and disassembler support; test-path fix \\
+    \hline
+    \texttt{ee528fe} & Widening add/subtract, integer extension, bitwise logical (31 instructions) \\
+    \hline
+\end{tabular}
+\caption{Commit history of this stage}
+\label{tab:commits}
+\end{table}
+
+\section*{Implemented Functionalities}
+\subsection{Architectural States}
+\begin{enumerate}
+    \item 32 Vector Registers each VLEN bits wide
+    \begin{enumerate}
+        \item Configurable VLEN values: [64, 65536] being powers of 2.
+        \item These are stored as a flat array, easier to handle in case of LMUL>1.
+        \item SEW: {8, 16, 32, 64} are supported.
+        \item Elements are stored little-endian: element $i$ of width SEW in register $v_N$ lives at
+        byte $N \cdot \frac{VLEN}{8} + i \cdot \frac{SEW}{8}$. An index past the end of one register
+        continues into the next, which is how LMUL = 2/4/8 register groups are addressed.
+        \item Mask bits can be read and written individually: bit $i$ of \texttt{v0} is the mask
+        of element $i$.
+    \end{enumerate}
+    \item 7 vector CSRs, defined at their spec addresses in the csr\_ array.
+    \begin{table}[h]
+    \centering
+    \begin{tabular}{|c|c|p{9cm}|}
+        \hline
+        \textbf{CSR} & \textbf{Address} & \textbf{Initial Value / Properties} \\
+        \hline
+        \texttt{vstart} & \texttt{0x008} & 0; writable \\
+        \hline
+        \texttt{vxsat}  & \texttt{0x009} & 0; writable \\
+        \hline
+        \texttt{vxrm}   & \texttt{0x00A} & 0; writable \\
+        \hline
+        \texttt{vcsr}   & \texttt{0x00F} & 0; writable \\
+        \hline
+        \texttt{vl}     & \texttt{0xC20} & 0; read-only to CSR instructions \\
+        \hline
+        \texttt{vtype}  & \texttt{0xC21} & \texttt{vill} (bit 63) set, any vector instruction before the first \texttt{vsetvli} is illegal; read-only \\
+        \hline
+        \texttt{vlenb}  & \texttt{0xC22} & VLEN/8; read-only \\
+        \hline
+    \end{tabular}
+    \caption{RISC-V Vector Extension Control and Status Registers}
+    \label{tab:vector_csrs}
+\end{table}
+    \item Read-only CSR rule: a CSR instruction that writes a read-only CSR (address bits
+    [11:10] = \texttt{11}, e.g.\ \texttt{csrrw x0, vl, x1}) now raises an ``Illegal instruction''
+    error. Previously Kites allowed such writes silently. The set/clear forms
+    (\texttt{csrrs}, \texttt{csrrc}, \ldots) only count as writes when their operand is non-zero,
+    so reading \texttt{vl} with \texttt{csrrs a0, vl, x0} is allowed.
+    \item The original code only knew three CSRs (\texttt{fflags}, \texttt{frm}, \texttt{fcsr}).
+    The 4096-entry \texttt{csr\_} array already had a slot for every address, but the vector CSRs
+    had no names, no reset values and no access rules.
+\end{enumerate}
+
+\subsection{Instructions}
+41 vector instructions are supported, in five groups.
+
+\subsubsection*{Configuration: \texttt{vsetvli}, \texttt{vsetivli}, \texttt{vsetvl}}
+\begin{itemize}
+    \item Assembler syntax: \texttt{vsetvli rd, rs1, e32, m1, ta, ma}. SEW is required; LMUL, the
+    tail policy and the mask policy are optional and default to \texttt{m1, tu, mu}. A raw vtype
+    number is also accepted.
+    \item Every legal SEW (\texttt{e8}--\texttt{e64}) and LMUL (\texttt{mf8}--\texttt{m8}) is
+    supported, with $VLMAX = LMUL \times VLEN / SEW$.
+    \item An unsupported vtype sets \texttt{vill} and \texttt{vl = 0}, following Spike: a
+    reserved LMUL encoding, SEW $>$ 64, a fractional LMUL too small for the SEW, or a reserved bit
+    set.
+    \item All three write the new \texttt{vl} to \texttt{rd} and clear \texttt{vstart}.
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|p{6cm}|p{7cm}|}
+    \hline
+    \textbf{Case} & \textbf{New \texttt{vl}} \\
+    \hline
+    \texttt{rs1} $\neq$ \texttt{x0} (or the immediate of \texttt{vsetivli}) & $\min(AVL, VLMAX)$ \\
+    \hline
+    \texttt{rs1} = \texttt{x0}, \texttt{rd} $\neq$ \texttt{x0} & $VLMAX$ \\
+    \hline
+    \texttt{rs1} = \texttt{rd} = \texttt{x0} & current \texttt{vl}, capped to the new $VLMAX$
+    (Spike's behaviour) \\
+    \hline
+\end{tabular}
+\caption{Application vector length (AVL) rules}
+\label{tab:avl}
+\end{table}
+
+\subsubsection*{Single-width integer add/subtract (7)}
+\texttt{vadd.vv/.vx/.vi}, \texttt{vsub.vv/.vx}, \texttt{vrsub.vx/.vi}. \texttt{vrsub} computes
+$src - vs2[i]$.
+
+\subsubsection*{Widening integer add/subtract (16)}
+\texttt{vwaddu}, \texttt{vwadd}, \texttt{vwsubu}, \texttt{vwsub}, each in \texttt{.vv},
+\texttt{.vx}, \texttt{.wv} and \texttt{.wx} forms.
+\begin{itemize}
+    \item The result is $2 \cdot SEW$ wide and occupies $2 \cdot LMUL$ registers.
+    \item \texttt{.vv/.vx}: both sources are SEW wide and are extended to $2 \cdot SEW$ first
+    (zero-extended for the \texttt{u} variants, sign-extended otherwise).
+    \item \texttt{.wv/.wx}: \texttt{vs2} is already $2 \cdot SEW$ wide; only the second operand is
+    extended.
+\end{itemize}
+
+\subsubsection*{Integer extension (6)}
+\texttt{vzext.vf2/.vf4/.vf8}, \texttt{vsext.vf2/.vf4/.vf8}: write SEW-wide elements from a
+source that is $SEW/2$, $SEW/4$ or $SEW/8$ wide.
+
+\subsubsection*{Bitwise logical (9)}
+\texttt{vand}, \texttt{vor}, \texttt{vxor}, each in \texttt{.vv}, \texttt{.vx} and \texttt{.vi}.
+\texttt{vxor.vi vd, vs, -1} is bitwise NOT.
+
+\subsection{Behaviour common to all vector arithmetic}
+\begin{longtable}{|p{3.5cm}|p{11cm}|}
+    \hline
+    \textbf{Feature} & \textbf{Behaviour} \\
+    \hline
+    Operand forms & \texttt{.vv} (vector-vector), \texttt{.vx} (scalar GPR, truncated to the
+    element width), \texttt{.vi} (5-bit signed immediate, sign-extended to the element width) \\
+    \hline
+    Active elements & Only indices $vstart \le i < vl$ are computed; \texttt{vstart} is reset to 0
+    afterwards. \\
+    \hline
+    Masking & An optional trailing \texttt{, v0.t}. Elements whose bit in \texttt{v0} is 0 are
+    skipped. \\
+    \hline
+    Tail and masked-off elements & Left undisturbed, as Spike does. This is also a legal result for
+    the ``agnostic'' policies. \\
+    \hline
+    Register groups & LMUL = 2/4/8 groups are supported; register numbers must be multiples of the
+    group size. Fractional LMUL uses part of one register. \\
+    \hline
+    Illegal-instruction traps & \texttt{vill} set (no \texttt{vsetvli}); misaligned register
+    groups; a masked instruction writing \texttt{v0}; widening with $2 \cdot SEW > 64$ or
+    LMUL = 8; extension with $SEW/factor < 8$; operand overlaps between different element widths
+    (Spike's rule: a narrow source may overlap only the top part of the destination group, and
+    only when LMUL $\ge$ 1). \\
+    \hline
+    Undo/redo & Each changed vector register and vector CSR is recorded and can be undone and
+    redone. \\
+    \hline
+\end{longtable}
+
+\subsection{Toolchain and UI support}
+\begin{itemize}
+    \item \textbf{Assembler:} vector registers, the \texttt{v0.t} mask operand, vtype syntax,
+    3 vset forms and 38 arithmetic mnemonics, with specific error messages such as
+    ``Invalid vtype: Expected SEW (e8, e16, e32 or e64)'', ``Destination overlaps the mask
+    register'' and ``Expected: -16 $\le$ simm5 $\le$ 15''.
+    \item \textbf{Disassembler:} machine words print back as assembly, e.g.\
+    \texttt{vsetvli x5, x10, e32, m1, ta, ma} or \texttt{vwadd.vx v8, v10, x6, v0.t}.
+    \item \textbf{Editor:} vector mnemonics are highlighted (new ``V-Instruction'' colour) and
+    autocompleted; \texttt{v0}--\texttt{v31} and \texttt{v0.t} are highlighted as registers.
+    Live error checking needed no change because it runs the real assembler.
+    \item \textbf{Profiler:} new ``V-Type'' instruction category.
+    \item \textbf{Register dump:} the JSON written by the CLI and VMs has a
+    \texttt{"vec\_registers"} section, one hex string per register, most-significant byte first
+    as Spike prints them.
+\end{itemize}
+
+\section*{Design}
+\subsection{Data flow}
+\begin{lstlisting}
+.s source
+  +- Lexer        (lexer.cpp)          + VEC_REGISTER tokens (v0-v31, v0.t)
+  +- Parser       (parser.cpp,         + 6 vector syntax types -> v_formats.cpp
+                   v_formats.cpp)        (vtype parsing, mask, overlap/range checks)
+  +- Code gen     (code_generator.cpp) + vset* and OP-V arithmetic encoders
+  +- AssembledProgram.text_buffer (32-bit words)
+        |
+  VM fetch/decode -------------- opcode 0b1010111 (OP-V)
+        |
+  +- Single-cycle: Execute -> ExecuteVector(); WriteBack -> WriteBackVector()
+  +- Pipelines:    EX stage -> execute_vector() (scalar operand forwarded); WB writes rd
+        |
+  rvv::ExecuteVectorInstruction()   (processor/vector/vector_execute.cpp)
+        +- vset*      -> ComputeVset -> write vl / vtype / vstart
+        +- arithmetic -> DecodeVectorArith -> legality checks ->
+                         element loop over [vstart, vl) with masking -> RegisterFile
+        +- every change appended to the step's undo record
+\end{lstlisting}
+
+\subsection{Key design decisions}
+\begin{enumerate}
+    \item \textbf{One shared vector module} (\texttt{src/processor/vector/}). The rules (vtype
+    decoding, AVL rules, decode table) and the execution are written once and called by both VM
+    types, so the single-cycle and pipelined VMs cannot disagree.
+    \item \textbf{One decode table as the source of truth.} \texttt{kVectorArith[]} lists, for
+    each instruction: funct6, funct3, the fixed vs1 value (for extensions), the operation, the
+    operand shape (single-width / widening / wide-source / extension), signedness and the
+    extension factor. The executor, the disassembler and the assembler's overlap checks all read
+    it, so adding most new instructions means adding rows.
+    \item \textbf{Vector results commit in the pipeline's EX stage}, the same way the existing
+    F/D instructions update \texttt{fcsr}. Instructions reach EX in order and are never flushed
+    there, so a vector instruction always sees the previous one's results without vector
+    forwarding, even in the variants without hazard detection. Scalar operands (\texttt{.vx}, the
+    AVL of \texttt{vsetvli}) use the normal forwarding paths.
+    \item \textbf{Spike as the golden reference} where the spec leaves room: undisturbed tail and
+    masked-off elements, the \texttt{vill} rules, the \texttt{rd = rs1 = x0} cap, and its
+    operand-overlap rules.
+    \item \textbf{The register file is valid from construction.} Its constructor calls
+    \texttt{Reset()}, so the vector storage is sized and \texttt{vtype = vill} before any VM uses
+    it. The \texttt{std::vector} holding the registers is sized from the runtime VLEN setting, and
+    \texttt{vtype} must not reset to 0 (which would be a valid configuration).
+\end{enumerate}
+
+\section*{Files Added}
+\begin{longtable}{|p{5.2cm}|p{9.8cm}|}
+    \hline
+    \textbf{File} & \textbf{Purpose} \\
+    \hline
+    \path{src/processor/vector/vector_config.h/.cpp} & VM-independent vector rules: OP-V opcode
+    and funct3 constants (OPCFG, OPIVV, OPIVX, OPIVI, OPMVV, OPMVX); vset form decoding; vtype
+    decode with Spike's \texttt{vill} rules; VLMAX; \texttt{ComputeVset} (AVL rules); vtype
+    encode/format; SEW/LMUL name parsing; the \texttt{kVectorArith[]} decode table with
+    \texttt{DecodeVectorArith}, \texttt{FindVectorArith} and \texttt{VectorArithMnemonic}. \\
+    \hline
+    \path{src/processor/vector/vector_execute.h/.cpp} & Single entry point for both VMs:
+    \texttt{ExecuteVectorInstruction}. Legality checks, scalar/immediate operands, the element
+    loop with masking, sign/zero extension and width truncation; \texttt{DestinationRecorder}
+    for undo; clearing \texttt{vstart}; committing vset* results. \\
+    \hline
+    \path{src/assembler/parse_formats/v_formats.cpp} & Vector parsing:
+    \texttt{parseVtypeOperands}; the \texttt{vsetvli}/\texttt{vsetivli} parsers;
+    \texttt{parseVectorArith} (two or three operands, optional \texttt{v0.t}, simm5 range,
+    masked-\texttt{v0} and narrow-overlap errors) and its four entry points. \\
+    \hline
+    \path{test/vector_register_file_test.cpp} & 14 tests: register file, CSRs, VLEN config,
+    undo. \\
+    \hline
+    \path{test/vset_test.cpp} & 16 tests: vset* family. \\
+    \hline
+    \path{test/vector_int_arith_test.cpp} & 15 tests: \texttt{vadd}/\texttt{vsub}/\texttt{vrsub}.
+    \\
+    \hline
+    \path{test/vector_widen_ext_logic_test.cpp} & 19 tests: widening, extension, logical. \\
+    \hline
+\end{longtable}
+
+\section*{Files Modified}
+\begin{longtable}{|p{4.6cm}|p{10.4cm}|}
+    \hline
+    \textbf{File} & \textbf{Changes and reason} \\
+    \hline
+    \multicolumn{2}{|l|}{\textit{Register state and configuration}} \\
+    \hline
+    \path{processor/registers.h/.cpp} & Vector state lives next to GPRs/FPRs/CSRs. Added the flat
+    vector byte array and \texttt{m\_vlenBytes}; constants \texttt{NUM\_VR}, the 7
+    \texttt{CSR\_V*} addresses and \texttt{VTYPE\_VILL}; element, mask-bit and whole-register
+    read/write methods; signal \texttt{updateVRegister}; \texttt{Reset()} sizes the file and sets
+    \texttt{vill} and \texttt{vlenb}; the constructor calls \texttt{Reset()}; vector CSR names in
+    the name tables; \texttt{IsValidVectorRegister()} and \texttt{IsReadOnlyCsr()}. \\
+    \hline
+    \path{config/config.h} & VLEN is an implementation parameter: \texttt{vlen = 128},
+    \texttt{setVlen()} with validation, \texttt{getVlen()}, \texttt{"vlen"} config key. \\
+    \hline
+    \path{processor/processor_base.h} & Undo stored 64-bit values only: \texttt{RegisterChange}
+    gained \texttt{reg\_type = 3} and \texttt{old\_bytes}/\texttt{new\_bytes}. \\
+    \hline
+    \path{utils/utils.cpp} & \texttt{DumpRegisters} writes a \texttt{"vec\_registers"} section.
+    \\
+    \hline
+    \multicolumn{2}{|l|}{\textit{Instruction tables}} \\
+    \hline
+    \path{common/instructions.h} & 41 \texttt{Instruction} enum values; 6 \texttt{SyntaxType}
+    values (\texttt{O\_GPR\_C\_GPR\_C\_VTYPE}, \texttt{O\_GPR\_C\_I\_C\_VTYPE},
+    \texttt{O\_VR\_C\_VR\_C\_VR}, \texttt{O\_VR\_C\_VR\_C\_GPR}, \texttt{O\_VR\_C\_VR\_C\_I},
+    \texttt{O\_VR\_C\_VR}); \texttt{isValidVsetInstruction}, \texttt{isValidVectorArithInstruction}.
+    \\
+    \hline
+    \path{common/instructions.cpp} & Encodings (opcode \texttt{0b1010111}, funct3, funct6; the
+    extensions' fixed vs1 value in the funct5 slot); name maps; valid-instruction and syntax
+    tables; help text; \texttt{V\_TYPE} category; OP-V case in \texttt{disassemble()}. \\
+    \hline
+    \path{common/instruction_types.h} & \texttt{V\_TYPE} category, name ``V-Type''. \\
+    \hline
+    \multicolumn{2}{|l|}{\textit{Assembler}} \\
+    \hline
+    \path{assembler/lexer.cpp} & \texttt{identifier()} returns \texttt{VEC\_REGISTER} for
+    \texttt{v0}--\texttt{v31} and \texttt{v0.t}, before the CSR and label-reference checks. \\
+    \hline
+    \path{assembler/parser.h/.cpp} & Declarations of the 8 new parse functions; 6 new cases in
+    the syntax switch of \texttt{parseTextDirective()}. \\
+    \hline
+    \path{assembler/code_generator.h} & \texttt{ICUnit} gained \texttt{vtype} and
+    \texttt{vm} (mask bit) fields. \\
+    \hline
+    \path{assembler/code_generator.cpp} & \texttt{generateVsetMachineCode} (three bit layouts)
+    and \texttt{generateVectorArithMachineCode}. \\
+    \hline
+    \multicolumn{2}{|l|}{\textit{Single-cycle VM}} \\
+    \hline
+    \path{rvss/rvss_processor.h/.cpp} & \texttt{ExecuteVector()} from \texttt{Execute()} for
+    OP-V; \texttt{WriteMemory()} skips OP-V; \texttt{WriteBackVector()} writes \texttt{rd} for
+    vset*; read-only CSR writes trap; undo/redo of vector registers. \\
+    \hline
+    \multicolumn{2}{|l|}{\textit{Pipelined VMs}} \\
+    \hline
+    \path{rv5s/rv5s_processor_base.h/.cpp} & \texttt{execute\_vector()} helper;
+    writeback of \texttt{rd} for OP-V; undo/redo of vector registers. \\
+    \hline
+    \path{rv5s/rv5s_control_unit.cpp} & OP-V sets \texttt{reg\_write} only for vset*, so an
+    arithmetic instruction's \texttt{vd} field is never treated as a GPR destination. \\
+    \hline
+    \path{rv5s_processor_}\{\path{h_f}, \path{h_nf}, \path{nh_f}, \path{nh_nf}\}\texttt{.cpp} & In EX, OP-V instructions call
+    \texttt{execute\_vector(instruction, alu\_in1, alu\_in2)} with forwarded operands. \\
+    \hline
+    \multicolumn{2}{|l|}{\textit{UI and resources}} \\
+    \hline
+    \path{resources/instructions/instructions.json} & \texttt{"VInstruction"} category with all
+    41 mnemonics. \\
+    \hline
+    \path{ui/theme/theme_manager.h/.cpp} & \texttt{VInstruction} syntax style. \\
+    \hline
+    \path{ui/common/syntax_highlighter.cpp} & Register regex covers \texttt{v0}--\texttt{v31}
+    and \texttt{v0.t}. \\
+    \hline
+    \multicolumn{2}{|l|}{\textit{Build and test infrastructure}} \\
+    \hline
+    \texttt{CMakeLists.txt} & Removed a glob over an undefined \texttt{TEST\_DIR} that scanned
+    the whole disk and hung configuration. \\
+    \hline
+    \path{test/test_main.cpp} & \texttt{windows.h} guarded by \texttt{\#ifdef \_WIN32};
+    changes directory to the source \texttt{test/} folder so \texttt{../examples} paths resolve.
+    \\
+    \hline
+    \path{test/CMakeLists.txt} & Defines \texttt{KITES\_TEST\_SOURCE\_DIR}. \\
+    \hline
+    4 cache test files & Tests passed cache line sizes in words where the API takes bytes. \\
+    \hline
+\end{longtable}
+
+\section*{Testing}
+\subsection{Methodology}
+\begin{itemize}
+    \item \textbf{Encodings against an independent reference:} every encoding was compared with
+    LLVM's RISC-V assembler (\texttt{llvm-mc -triple=riscv64 -mattr=+zve64x -show-encoding});
+    72 reference encodings are hard-coded in the tests. LLVM was also used to confirm which forms
+    are illegal.
+    \item \textbf{Table consistency:} each assembled word is decoded back with the executor's
+    decode table and must give the same mnemonic.
+    \item \textbf{Behaviour against the spec and Spike's rules:} expected values were worked out
+    by hand for edge cases (wraparound at every SEW, sign vs.\ zero extension, scalar truncation,
+    simm5 sign extension, 32$\to$64-bit widening).
+    \item \textbf{Every VM:} the same programs run on the single-cycle VM and all four pipelines;
+    dedicated tests cover back-to-back dependencies (forwarding, load-use stall).
+    \item \textbf{Negative testing:} malformed assembly must be rejected; illegal configurations
+    must trap at run time, and those tests first assert that the source assembles.
+    \item \textbf{State restoration:} undo/redo of vector registers (including multi-register
+    groups), vector CSRs and \texttt{rd}.
+\end{itemize}
+
+\subsection{Test files}
+\begin{longtable}{|p{4.6cm}|c|p{8.6cm}|}
+    \hline
+    \textbf{File} & \textbf{Tests} & \textbf{Coverage} \\
+    \hline
+    \path{vector_register_file_test.cpp} & 14 & Reset state matches Spike; little-endian
+    layout; SEW truncation; LMUL group indexing; mask bits; bounds errors; VLEN config; read-only
+    CSRs; CSR reads of \texttt{vl}/\texttt{vtype}/\texttt{vlenb}; vector undo/redo. \\
+    \hline
+    \path{vset_test.cpp} & 16 & 10 encodings; defaults; 12 malformed forms; VLMAX for 10
+    SEW/LMUL pairs; 6 \texttt{vill} cases; AVL rules; \texttt{vstart} clearing; undo/redo; VLEN =
+    512; all five VMs; forwarding and load-use. \\
+    \hline
+    \path{vector_int_arith_test.cpp} & 15 & 11 encodings; 11 illegal forms; wraparound at e32
+    and e64; truncation and sign extension; masking and tail; \texttt{vstart}; LMUL = 2;
+    illegal traps; undo/redo; all five VMs. \\
+    \hline
+    \path{vector_widen_ext_logic_test.cpp} & 19 & 31 encodings with decode-back; 13 illegal
+    forms; widening at e8 and e32$\to$e64; LMUL = 2 with a 4-register destination; extension at
+    vf2/vf4/vf8; all logical forms; overlap rules; masking; undo; all five VMs. \\
+    \hline
+\end{longtable}
+
+\subsection{Results}
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|c|c|}
+    \hline
+    \textbf{Stage} & \textbf{Tests} & \textbf{Passing} \\
+    \hline
+    Original code, as received & 133 & 33 \\
+    \hline
+    After the test-path fix & 147 & 133 \\
+    \hline
+    After the cache test fix & 163 & 163 \\
+    \hline
+    Final & 197 & 197 \\
+    \hline
+\end{tabular}
+\caption{Test suite results}
+\label{tab:results}
+\end{table}
+
+The GUI application, the CLI (\texttt{kites-cli}) and the test binary all build cleanly.
+
+\section*{Limitations and Known Issues}
+\subsection*{Not implemented yet}
+\begin{itemize}
+    \item Vector loads/stores, compare/mask instructions, multiply/divide, min/max, shifts,
+    fixed-point, reductions and permutations.
+    \item \texttt{vxrm}, \texttt{vxsat} and \texttt{vcsr} exist but are not used yet.
+    \item There is no vector register view in the GUI; the \texttt{updateVRegister} signal is
+    emitted but not connected.
+\end{itemize}
+
+\subsection*{Known issues}
+\begin{itemize}
+    \item Pre-existing pipeline bugs found during testing: \texttt{auipc} (and therefore
+    \texttt{la}) gives a wrong value on the pipelined VMs, and CSR instructions are not executed
+    by the pipelines (\texttt{execute\_csr()} is an empty stub).
+    \item ``Agnostic'' tail and mask policies are implemented as undisturbed, which the spec allows
+    and Spike does.
+    \item The hazard unit compares fixed bit fields, so a vector instruction may be stalled
+    unnecessarily on the no-forwarding pipelines. This only affects cycle counts.
+    \item \texttt{v0}--\texttt{v31} can no longer be used as label names.
+\end{itemize}
+
+\end{document}

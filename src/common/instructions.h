@@ -233,7 +233,18 @@ enum class Instruction
     kvor_vi,
     kvxor_vv,
     kvxor_vx,
-    kvxor_vi
+    kvxor_vi,
+
+    // RVV single-width bit shifts
+    kvsll_vv,
+    kvsll_vx,
+    kvsll_vi,
+    kvsrl_vv,
+    kvsrl_vx,
+    kvsrl_vi,
+    kvsra_vv,
+    kvsra_vx,
+    kvsra_vi
 };
 
 // TODO: use enum class for instruction encoding
@@ -254,7 +265,7 @@ struct InstructionEncoding
     }
 };
 
-// opcode, funct2, funct3, funct5, func6, funct7
+// opcode, funct2, funct3, funct5, funct6, funct7
 // TODO: use enum in place of strings from the parser stage
 extern std::unordered_map<Instruction, InstructionEncoding> instruction_encoding_map;
 

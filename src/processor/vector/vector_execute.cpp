@@ -149,8 +149,11 @@ void ClearVstart(RegisterFile &registers, std::vector<RegisterChange> &changes)
     }
 }
 
-uint64_t ApplyArith(VectorArithOp op, uint64_t vs2Element, uint64_t source)
+/// One element's result. @p eew is the destination element width, which bounds shift amounts.
+uint64_t ApplyArith(VectorArithOp op, uint64_t vs2Element, uint64_t source, uint64_t eew)
 {
+    // Shifts use only the low log2(SEW) bits of the shift amount (0..SEW-1).
+    const unsigned shift = static_cast<unsigned>(source & (eew - 1));
     switch (op)
     {
     case VectorArithOp::Add:
@@ -165,6 +168,13 @@ uint64_t ApplyArith(VectorArithOp op, uint64_t vs2Element, uint64_t source)
         return vs2Element | source;
     case VectorArithOp::Xor:
         return vs2Element ^ source;
+    case VectorArithOp::Sll:
+        return vs2Element << shift;
+    case VectorArithOp::Srl:
+        return vs2Element >> shift; // vs2Element was zero-extended
+    case VectorArithOp::Sra:
+        // vs2Element was sign-extended to 64 bits, so an arithmetic shift fills with the sign.
+        return static_cast<uint64_t>(static_cast<int64_t>(vs2Element) >> shift);
     case VectorArithOp::Extend:
         return vs2Element;
     }
@@ -268,11 +278,15 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
                                  "vs1");
     }
 
-    // The scalar operand: x[rs1], or simm5 sign-extended (both used at SEW bits).
+    // The scalar operand: x[rs1], uimm (shifts) or simm5 sign-extended, used at SEW bits.
     uint64_t scalar = 0;
     if (info.funct3 == FUNCT3_OPIVX || info.funct3 == FUNCT3_OPMVX)
     {
         scalar = rs1Value;
+    }
+    else if (info.funct3 == FUNCT3_OPIVI && HasUnsignedImmediate(info))
+    {
+        scalar = field19_15; // uimm: 0..31, zero-extended
     }
     else if (info.funct3 == FUNCT3_OPIVI)
     {
@@ -301,7 +315,7 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
             b = Extend(raw, src1.eew, info.isSigned);
         }
         registers.WriteVectorElement(vd, i, dest.eew,
-                                     ApplyArith(info.op, a, b) & SewMask(dest.eew));
+                                     ApplyArith(info.op, a, b, dest.eew) & SewMask(dest.eew));
     }
     recorder.Record(changes);
     ClearVstart(registers, changes);

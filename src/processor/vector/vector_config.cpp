@@ -89,8 +89,26 @@ constexpr VectorArithInfo kVectorArith[] = {
     {0b001011, FUNCT3_OPIVV, -1, Op::Xor, Shape::SingleWidth, U, 1, "vxor.vv"},
     {0b001011, FUNCT3_OPIVX, -1, Op::Xor, Shape::SingleWidth, U, 1, "vxor.vx"},
     {0b001011, FUNCT3_OPIVI, -1, Op::Xor, Shape::SingleWidth, U, 1, "vxor.vi"},
+
+    // 11.6 Single-width bit shift. Only vsra is "signed": its vs2 element is sign-extended
+    // before shifting, so the vacated high bits fill with copies of the sign bit.
+    {0b100101, FUNCT3_OPIVV, -1, Op::Sll, Shape::SingleWidth, U, 1, "vsll.vv"},
+    {0b100101, FUNCT3_OPIVX, -1, Op::Sll, Shape::SingleWidth, U, 1, "vsll.vx"},
+    {0b100101, FUNCT3_OPIVI, -1, Op::Sll, Shape::SingleWidth, U, 1, "vsll.vi"},
+    {0b101000, FUNCT3_OPIVV, -1, Op::Srl, Shape::SingleWidth, U, 1, "vsrl.vv"},
+    {0b101000, FUNCT3_OPIVX, -1, Op::Srl, Shape::SingleWidth, U, 1, "vsrl.vx"},
+    {0b101000, FUNCT3_OPIVI, -1, Op::Srl, Shape::SingleWidth, U, 1, "vsrl.vi"},
+    {0b101001, FUNCT3_OPIVV, -1, Op::Sra, Shape::SingleWidth, S, 1, "vsra.vv"},
+    {0b101001, FUNCT3_OPIVX, -1, Op::Sra, Shape::SingleWidth, S, 1, "vsra.vx"},
+    {0b101001, FUNCT3_OPIVI, -1, Op::Sra, Shape::SingleWidth, S, 1, "vsra.vi"},
 };
 } // namespace
+
+bool HasUnsignedImmediate(const VectorArithInfo &info)
+{
+    return info.op == VectorArithOp::Sll || info.op == VectorArithOp::Srl ||
+           info.op == VectorArithOp::Sra;
+}
 
 const VectorArithInfo *DecodeVectorArith(uint32_t instruction)
 {

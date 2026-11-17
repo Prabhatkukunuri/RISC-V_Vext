@@ -287,14 +287,20 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
 
     if (sourceType == TokenType::NUM)
     {
+        // Shifts take an unsigned uimm (0..31); everything else a signed simm5 (-16..15).
+        const rvv::VectorArithInfo *info = rvv::FindVectorArith(currentToken().value);
+        const bool isUnsigned = info && rvv::HasUnsignedImmediate(*info);
+        const int64_t low = isUnsigned ? 0 : -16;
+        const int64_t high = isUnsigned ? 31 : 15;
         const Token &source = peekToken(5);
         const int64_t imm = std::stoll(source.value);
-        if (imm < -16 || imm > 15)
+        if (imm < low || imm > high)
         {
             recordError(ParseError(source.line_number, "Immediate value out of range"));
             errors_.all_errors.emplace_back(errors::ImmediateOutOfRangeError(
-                "Immediate value out of range", "Expected: -16 <= simm5 <= 15", filename_,
-                source.line_number, source.column_number,
+                "Immediate value out of range",
+                isUnsigned ? "Expected: 0 <= uimm <= 31" : "Expected: -16 <= simm5 <= 15",
+                filename_, source.line_number, source.column_number,
                 GetLineFromFile(filename_, source.line_number)));
             skipCurrentLine();
             return true;
