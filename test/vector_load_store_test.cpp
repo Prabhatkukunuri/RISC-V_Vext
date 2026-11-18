@@ -350,6 +350,42 @@ TEST(VectorLoadStoreTest, EewDiffersFromSew)
                         0x201F1E1D1C1B1A19}));
 }
 
+// Spec section 8: an element that is not naturally aligned is either transferred or raises an
+// address-misaligned exception. Kites, like its scalar loads/stores, transfers it.
+TEST(VectorLoadStoreTest, MisalignedElementsAreTransferred)
+{
+    auto vm = runOn<Rvss>("lui a0, 0x10000\n"
+                          "addi a1, a0, 1\n"           // odd base
+                          "vsetivli x0, 4, e32, m1, ta, ma\n"
+                          "vle32.v v1, (a1)\n"         // words at +1, +5, +9, +13
+                          "li t0, 3\n"
+                          "vlse16.v v2, (a1), t0\n"    // halfwords at +1, +4, +7, +10
+                          "vluxei8.v v3, (a0), v4\n"   // words at the odd offsets in v4
+                          "addi a2, a0, 67\n"
+                          "vse32.v v1, (a2)\n",        // store to 0x10000043
+                          [](Rvss &m)
+                          {
+                              Bytes bytes;
+                              for (int i = 0; i < 32; ++i)
+                              {
+                                  bytes.push_back(static_cast<uint8_t>(0x10 + i));
+                              }
+                              writeBytes(m, kBase, bytes);
+                              writeElements(m.registers_, 4, 8, {3, 1, 7, 5});
+                          });
+    EXPECT_EQ(readElements(vm->registers_, 1, 32, 4),
+              (Elements{0x14131211, 0x18171615, 0x1C1B1A19, 0x201F1E1D}));
+    EXPECT_EQ(readElements(vm->registers_, 2, 16, 4), (Elements{0x1211, 0x1514, 0x1817, 0x1B1A}));
+    EXPECT_EQ(readElements(vm->registers_, 3, 32, 4),
+              (Elements{0x16151413, 0x14131211, 0x1A191817, 0x18171615}));
+    Bytes expected;
+    for (int i = 1; i <= 16; ++i)
+    {
+        expected.push_back(static_cast<uint8_t>(0x10 + i));
+    }
+    EXPECT_EQ(readBytes(*vm, kBase + 67, 16), expected);
+}
+
 TEST(VectorLoadStoreTest, MaskedLoadAndStoreSkipInactiveElements)
 {
     // v0 = 0b1010: elements 1 and 3 active.

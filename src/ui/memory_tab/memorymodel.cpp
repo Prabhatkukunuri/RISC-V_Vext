@@ -1,12 +1,16 @@
 #include "memorymodel.h"
 #include "config/config.h"
-#include <QDebug>
+#include <QBrush>
+#include <QColor>
 #include <algorithm>
 #include <cstdint>
 namespace Kites
 {
 namespace
 {
+// Same highlight as the register tables (Qt reads "#b13232fd" as #AARRGGBB).
+const QColor kWrittenColor("#b13232fd");
+
 // Highest 8-byte-aligned row that still fits entirely inside memory.
 uint64_t maxCentralAddress()
 {
@@ -46,7 +50,7 @@ int MemoryModel::rowCount(const QModelIndex &parent) const
 int MemoryModel::columnCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent);
-    return 10; // address + 8 bytes + full double word
+    return 10; // address + full double word + 8 bytes
 }
 
 void MemoryModel::setRowsVisible(int rows)
@@ -62,6 +66,7 @@ void MemoryModel::setDisplayBase(Base base)
     m_displayBase = base;
     endResetModel();
 }
+
 void MemoryModel::changeMemoryController(MemoryController *memoryController)
 {
     beginResetModel();
@@ -71,15 +76,11 @@ void MemoryModel::changeMemoryController(MemoryController *memoryController)
     connect(m_memoryController, &MemoryController::memoryUpdated, this, &MemoryModel::updateMemory);
     connect(m_memoryController, &MemoryController::memoryResetSignal, this,
             &MemoryModel::memoryResetSlot);
+    m_written.clear();
+    m_clockedSinceReset = false;
+    m_hasLastWrite = false;
     endResetModel();
 }
-// bool MemoryModel::isValidAddress(const uint64_t& address, int offset) const
-// {
-//     if(offset < 0)
-//     {
-//         return (vm_config::config.getMemorySize() + offset*8 < )
-//     }
-// }
 
 bool MemoryModel::canOffset(int offset)
 {
@@ -107,6 +108,68 @@ void MemoryModel::setCentralAddress(const uint64_t &address)
     endResetModel();
 }
 
+void MemoryModel::setAscending(bool ascending)
+{
+    beginResetModel();
+    m_ascending = ascending;
+    endResetModel();
+}
+
+bool MemoryModel::isAscending() const
+{
+    return m_ascending;
+}
+
+void MemoryModel::showFrom(uint64_t address)
+{
+    // The first row in reading order is half a window before the central row (ascending) or
+    // half a window after it (descending, where it is the bottom row).
+    const int64_t base = static_cast<int64_t>((address / 8) * 8);
+    const int64_t half = static_cast<int64_t>(m_rowsVisible / 2) * 8;
+    const int64_t lastRow = static_cast<int64_t>(m_rowsVisible - 1) * 8;
+    beginResetModel();
+    m_currentCentralAddress =
+        clampCentralAddress(m_ascending ? base + half : base - half + lastRow);
+    endResetModel();
+}
+
+bool MemoryModel::hasLastWrite() const
+{
+    return m_hasLastWrite;
+}
+
+uint64_t MemoryModel::lastWriteAddress() const
+{
+    return m_lastWrite;
+}
+
+bool MemoryModel::rowAddress(int row, uint64_t &address) const
+{
+    const int64_t half = static_cast<int64_t>(m_rowsVisible / 2) * 8;
+    const int64_t central = static_cast<int64_t>(m_currentCentralAddress);
+    const int64_t signedAddress = m_ascending ? central - half + static_cast<int64_t>(row) * 8
+                                              : central + half - static_cast<int64_t>(row) * 8;
+    // Every column of a row reads somewhere in its 8 bytes, so the whole row must fit in
+    // memory. A partially out-of-range row would make the reads throw std::out_of_range, and
+    // that would unwind through Qt's view code rather than be caught.
+    const uint64_t memorySize = vm_config::config.getMemorySize();
+    if (signedAddress < 0 || memorySize < 8 || static_cast<uint64_t>(signedAddress) > memorySize - 8)
+    {
+        return false;
+    }
+    address = static_cast<uint64_t>(signedAddress);
+    return true;
+}
+
+int MemoryModel::rowOf(uint64_t address) const
+{
+    const int64_t base = static_cast<int64_t>((address / 8) * 8);
+    const int64_t half = static_cast<int64_t>(m_rowsVisible / 2) * 8;
+    const int64_t central = static_cast<int64_t>(m_currentCentralAddress);
+    const int64_t row = m_ascending ? (base - (central - half)) / 8 : (central + half - base) / 8;
+    return row >= 0 && row < m_rowsVisible ? static_cast<int>(row) : -1;
+}
+
 QVariant MemoryModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
     if (role != Qt::DisplayRole)
@@ -120,24 +183,8 @@ QVariant MemoryModel::headerData(int section, Qt::Orientation orientation, int r
             return QString("Address");
         case 1:
             return QString("Double Word");
-        case 2:
-            return QString("Byte 0");
-        case 3:
-            return QString("Byte 1");
-        case 4:
-            return QString("Byte 2");
-        case 5:
-            return QString("Byte 3");
-        case 6:
-            return QString("Byte 4");
-        case 7:
-            return QString("Byte 5");
-        case 8:
-            return QString("Byte 6");
-        case 9:
-            return QString("Byte 7");
         default:
-            return QVariant{};
+            return QString("Byte %1").arg(section - 2); // byte at address + n
         }
     }
     return QVariant{};
@@ -147,10 +194,7 @@ QVariant MemoryModel::data(const QModelIndex &index, int role) const
 {
     if (!m_memoryController)
     {
-        if (role == Qt::DisplayRole)
-            return QString("yo");
-        else
-            return QVariant();
+        return QVariant();
     }
 
     if (role == Qt::TextAlignmentRole)
@@ -158,35 +202,52 @@ QVariant MemoryModel::data(const QModelIndex &index, int role) const
         return Qt::AlignCenter;
     }
 
+    uint64_t alignedAddress = 0;
+    const bool inMemory = rowAddress(index.row(), alignedAddress);
+
+    if (role == Qt::BackgroundRole)
+    {
+        if (!inMemory || index.column() == 0 || m_written.empty())
+        {
+            return QVariant();
+        }
+        if (index.column() == 1)
+        {
+            for (uint64_t b = 0; b < 8; ++b)
+            {
+                if (m_written.count(alignedAddress + b))
+                {
+                    return QBrush(kWrittenColor);
+                }
+            }
+            return QVariant();
+        }
+        const uint64_t address = alignedAddress + static_cast<uint64_t>(index.column() - 2);
+        return m_written.count(address) ? QVariant(QBrush(kWrittenColor)) : QVariant();
+    }
+
     if (role == Qt::DisplayRole || role == Qt::ToolTipRole)
     {
-        int offsetAddress = ((((m_rowsVisible * 8) / 2) / 8) * 8) - (index.row() * 8);
-        // protecting against overflows
-        if (offsetAddress < 0 && static_cast<uint64_t>(abs(offsetAddress)) > m_currentCentralAddress)
-        {
-            return QString("-");
-        }
-        const uint64_t alignedAddress =
-            static_cast<uint64_t>(m_currentCentralAddress) + offsetAddress;
-
-        // Every column of a row reads somewhere in the 8 bytes at alignedAddress, so the whole
-        // row must fit in memory. A partially out-of-range row would make the reads below throw
-        // std::out_of_range, and that would unwind through Qt's view code rather than be caught.
-        const uint64_t memorySize = vm_config::config.getMemorySize();
-        if (memorySize < 8 || alignedAddress > memorySize - 8)
+        if (!inMemory)
         {
             return QString("-");
         }
 
-        // size_t row = static_cast<size_t>(index.row());
-        //  if(!isValidAddress(alignedAddress))
-        //  {
-        //      return QString("-");
-        //  }
-        // TODO
-        //  refactor this swithch to dynamically give the byte based on column number
-        //  so that we have have an arbitrary byte sized block
-        //  for supporting 32 bit arch in future
+        if (role == Qt::ToolTipRole && index.column() >= 2)
+        {
+            const uint64_t address = alignedAddress + static_cast<uint64_t>(index.column() - 2);
+            const uint8_t byte = m_memoryController->readByte_d(address);
+            QString tip = QString("0x%1: 0x%2 (%3)")
+                              .arg(address, 0, 16)
+                              .arg(byte, 2, 16, QChar('0'))
+                              .arg(byte);
+            if (m_written.count(address))
+            {
+                tip += "\nwritten by the latest step that stored to memory";
+            }
+            return tip;
+        }
+
         QString prefix;
         switch (m_displayBase)
         {
@@ -224,30 +285,63 @@ QVariant MemoryModel::data(const QModelIndex &index, int role) const
     return QVariant();
 }
 
+void MemoryModel::refreshAllRows()
+{
+    if (m_rowsVisible > 0)
+    {
+        emit dataChanged(index(0, 0), index(m_rowsVisible - 1, columnCount() - 1),
+                         {Qt::DisplayRole, Qt::ToolTipRole, Qt::BackgroundRole});
+    }
+}
+
 void MemoryModel::memoryResetSlot()
 {
     beginResetModel();
+    m_written.clear();
+    m_clockedSinceReset = false;
+    m_startNewWriteGroup = true;
+    m_hasLastWrite = false;
     endResetModel();
 }
 
-void MemoryModel::updateMemory(uint64_t address)
+void MemoryModel::processorClocked()
 {
+    m_clockedSinceReset = true;
+    m_startNewWriteGroup = true;
+}
 
-    int64_t topAddr =
-        static_cast<int64_t>(m_currentCentralAddress) + static_cast<int64_t>(m_rowsVisible / 2) * 8;
-    int64_t bytesFromTop = topAddr - static_cast<int64_t>(address);
+void MemoryModel::updateMemory(uint64_t address, unsigned int size)
+{
+    if (m_clockedSinceReset)
+    {
+        if (m_startNewWriteGroup)
+        {
+            // First write of a new step: the previous step's highlight goes away.
+            m_startNewWriteGroup = false;
+            if (!m_written.empty())
+            {
+                m_written.clear();
+                refreshAllRows();
+            }
+        }
+        for (unsigned int b = 0; b < size; ++b)
+        {
+            m_written.insert(address + b);
+        }
+        m_hasLastWrite = true;
+        m_lastWrite = address;
+    }
 
-    // address not in the visible window? nothing to update
-    if (bytesFromTop < 0)
-        return;
-
-    int row = static_cast<int>(bytesFromTop / 8);
-    if (row < 0 || row >= m_rowsVisible)
-        return;
-
-    QModelIndex topLeft = index(row, 0);
-    QModelIndex bottomRight = index(row, columnCount() - 1);
-
-    emit dataChanged(topLeft, bottomRight, {Qt::DisplayRole, Qt::ToolTipRole});
+    // A misaligned write can straddle two rows: refresh each row it touches.
+    const int first = rowOf(address);
+    const int last = rowOf(address + (size == 0 ? 0 : size - 1));
+    for (int row : {first, last})
+    {
+        if (row >= 0)
+        {
+            emit dataChanged(index(row, 0), index(row, columnCount() - 1),
+                             {Qt::DisplayRole, Qt::ToolTipRole, Qt::BackgroundRole});
+        }
+    }
 }
 } // namespace Kites

@@ -72,7 +72,8 @@ class MemoryController : public QObject
  
     // Cache* GetCache() { return &l1_cache_; }
   signals:
-    void memoryUpdated(uint64_t address);
+    /// @p size bytes starting at @p address were written (1, 2, 4 or 8).
+    void memoryUpdated(uint64_t address, unsigned int size);
     void memoryResetSignal();
 };
 }// namespace Kites

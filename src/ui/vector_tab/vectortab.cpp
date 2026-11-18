@@ -79,10 +79,12 @@ VectorTab::VectorTab(QWidget *parent, RegisterFile *regfile) : KitesTab(parent)
     const auto sizeColumns = [this]
     {
         QHeaderView *header = m_table->horizontalHeader();
-        const bool fits = m_model->columnCount() - 1 <= 16;
+        const int elements = m_model->columnCount() - 2; // minus the name and mask columns
+        const bool fits = elements <= 16;
         header->setSectionResizeMode(fits ? QHeaderView::Stretch
                                           : QHeaderView::ResizeToContents);
         header->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        header->setSectionResizeMode(elements + 1, QHeaderView::ResizeToContents);
     };
     connect(m_model, &QAbstractItemModel::modelReset, this, sizeColumns);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);

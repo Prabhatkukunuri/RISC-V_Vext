@@ -23,25 +23,25 @@ void MemoryController::reset()
 void MemoryController::writeByte(uint64_t address, uint8_t value)
 {
     l1_cache_.writeByte(address, value);
-    emit memoryUpdated(address);
+    emit memoryUpdated(address, 1);
 }
 
 void MemoryController::writeHalfWord(uint64_t address, uint16_t value)
 {
     l1_cache_.writeHalfWord(address, value);
-    emit memoryUpdated(address);
+    emit memoryUpdated(address, 2);
 }
 
 void MemoryController::writeWord(uint64_t address, uint32_t value)
 {
     l1_cache_.writeWord(address, value);
-    emit memoryUpdated(address);
+    emit memoryUpdated(address, 4);
 }
 
 void MemoryController::writeDoubleWord(uint64_t address, uint64_t value)
 {
     l1_cache_.writeDoubleWord(address, value);
-    emit memoryUpdated(address);
+    emit memoryUpdated(address, 8);
 }
 
 uint8_t MemoryController::readByte(uint64_t address)
@@ -101,22 +101,22 @@ uint32_t MemoryController::readInstruction(uint64_t address)
 void MemoryController::writeByte_d(uint64_t address, uint8_t value)
 {
     memory_.writeByte(address, value);
-    emit memoryUpdated(address);
+    emit memoryUpdated(address, 1);
 }
 void MemoryController::writeHalfWord_d(uint64_t address, uint16_t value)
 {
     memory_.writeHalfWord(address, value);
-    emit memoryUpdated(address);
+    emit memoryUpdated(address, 2);
 }
 void MemoryController::writeWord_d(uint64_t address, uint32_t value)
 {
     memory_.writeWord(address, value);
-    emit memoryUpdated(address);
+    emit memoryUpdated(address, 4);
 }
 void MemoryController::writeDoubleWord_d(uint64_t address, uint64_t value)
 {
     memory_.writeDoubleWord(address, value);
-    emit memoryUpdated(address);
+    emit memoryUpdated(address, 8);
 }
 
 void MemoryController::printMemory(const uint64_t address, unsigned int rows)

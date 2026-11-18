@@ -196,6 +196,13 @@ void ProcessorManager::step()
     try
     {
         m_currentProcessor->Step();
+        // Run() announces every step with processorClockedSignal, but a single Step() (the
+        // Step button in debug mode) does not. Announce it here so the editor's line highlight
+        // and the memory tab's "latest store" highlight follow single-stepping too. (The full
+        // clock signal is not re-emitted: the profiler would count the step against a stale PC.)
+        m_currentProcessor->setProcessorState();
+        updateEditorHighlight(m_currentProcessor->processor_state_.programCounters);
+        emit processorStateChangedSignal();
     }
     catch (const std::exception &e)
     {

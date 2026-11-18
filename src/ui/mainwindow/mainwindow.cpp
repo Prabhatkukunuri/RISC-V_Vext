@@ -400,6 +400,11 @@ void MainWindow::setUpTabs()
     m_tabs[TabIndex::CompilerTabIndex]  = new CompilerTab(this);
     m_tabs[TabIndex::ProfilerTabIndex]  = new ProfilerTab(this, m_processorManager->getProfiler());
     m_tabs[TabIndex::VectorTabIndex]    = new VectorTab(this, m_processorManager->getRegisterFile());
+    // One signal per clock (emitted on the VM thread, queued here after that step's memory
+    // writes): the memory tab uses it to group writes into "the latest store" for highlighting.
+    connect(m_processorManager, &ProcessorManager::processorStateChangedSignal,
+            dynamic_cast<MemoryTab *>(m_tabs[TabIndex::MemoryTabIndex]),
+            &MemoryTab::processorClocked);
     // a little experiment
     connect(this, &MainWindow::processorChangedSignal,
             dynamic_cast<ProcessorTab *>(m_tabs[TabIndex::ProcessorTabIndex]),

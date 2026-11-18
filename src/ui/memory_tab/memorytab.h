@@ -20,6 +20,10 @@ class MemoryTab : public KitesTab
     void changeMemoryController(MemoryController *memoryController);
     ~MemoryTab();
 
+  public slots:
+    /// Connect to the processor's clock: marks a step boundary for the write highlight.
+    void processorClocked();
+
   private:
     Ui::MemoryTab *ui;
     MemoryModel *m_memoryModel = nullptr;

@@ -9,7 +9,8 @@ class RegisterFile;
 
 /**
  * @brief Table model of the vector register file: one row per register (v0-v31), one column per
- * element of the chosen element width, element 0 first.
+ * element of the chosen element width, element 0 first, and a last column showing the register
+ * read as a mask (bits 0..vl-1).
  *
  * Updates from the VM thread are coalesced into one refresh per event-loop pass. Elements that
  * the most recent vector write changed are highlighted, tail elements (index >= vl within their
@@ -69,6 +70,9 @@ class VectorRegisterModel : public QAbstractTableModel
     /// Index of an element within its LMUL register group, or -1 if tails can't be shown.
     int64_t groupElementIndex(size_t reg, size_t element) const;
     QString formatValue(uint64_t value) const;
+    /// Column that shows each register read as a mask (bits 0..vl-1).
+    int maskColumn() const;
+    QString maskBits(size_t reg) const;
 
     RegisterFile *m_registers = nullptr;
     uint64_t m_viewEew = 0;
