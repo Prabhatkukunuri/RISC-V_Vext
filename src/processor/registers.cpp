@@ -86,6 +86,7 @@ void RegisterFile::WriteCsr(size_t reg, uint64_t value)
     if (reg >= NUM_CSR)
         throw std::out_of_range("Invalid CSR index");
     csr_[reg] = value;
+    emit updateCsrRegister(reg);
 }
 
 std::vector<uint64_t> RegisterFile::GetGprValues() const

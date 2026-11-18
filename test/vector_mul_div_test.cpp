@@ -413,8 +413,10 @@ TEST(VectorMergeMoveTest, MoveWithNonZeroVs2IsReservedAndUndoWorks)
 
     // vmv.v.v v1, v3 with the vs2 field set to v2 instead of v0.
     std::vector<Kites::RegisterChange> changes;
+    std::vector<Kites::MemoryChange> memoryChanges;
     EXPECT_THROW(Kites::rvv::ExecuteVectorInstruction(0x5e0180d7 | (2u << 20), 0, 0,
-                                                      vm->registers_, changes),
+                                                      vm->registers_, vm->memory_controller_,
+                                                      changes, memoryChanges),
                  std::runtime_error);
 }
 

@@ -163,6 +163,8 @@ class RegisterFile : public QObject
     void updateRegister(size_t regIndex, uint64_t value);
     void updateFRegister(size_t regIndex, uint64_t value);
     void updateVRegister(size_t regIndex);
+    /// A CSR was written (e.g. vl/vtype by vset*, or vl trimmed by a fault-only-first load).
+    void updateCsrRegister(size_t csrAddress);
     void registerResetSignal();
 };
 

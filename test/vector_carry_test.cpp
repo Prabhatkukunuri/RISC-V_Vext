@@ -253,12 +253,15 @@ TEST(VectorCarryTest, ReservedEncodingsAndUndo)
     EXPECT_EQ(readElements(vm->registers_, 4, 8, 4), (Elements{0x00, 0x00, 0x31, 0x00}));
 
     std::vector<Kites::RegisterChange> changes;
+    std::vector<Kites::MemoryChange> memoryChanges;
     // vadc.vvm v1, v2, v3 with vm = 1 is reserved.
     EXPECT_THROW(Kites::rvv::ExecuteVectorInstruction(0x402180d7 | (1u << 25), 0, 0,
-                                                      vm->registers_, changes),
+                                                      vm->registers_, vm->memory_controller_,
+                                                      changes, memoryChanges),
                  std::runtime_error);
     // vadc.vvm v0, v2, v3, v0 is reserved (vd = v0).
-    EXPECT_THROW(Kites::rvv::ExecuteVectorInstruction(0x40218057, 0, 0, vm->registers_, changes),
+    EXPECT_THROW(Kites::rvv::ExecuteVectorInstruction(0x40218057, 0, 0, vm->registers_, vm->memory_controller_,
+                                                      changes, memoryChanges),
                  std::runtime_error);
 }
 

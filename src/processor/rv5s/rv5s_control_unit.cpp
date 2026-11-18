@@ -7,6 +7,7 @@
 #include "common/instructions.h" // For instruction encoding maps if needed
 #include "processor/alu.h"
 #include "processor/vector/vector_execute.h"
+#include "processor/vector/vector_memory.h"
 
 #include <cstdint>
 
@@ -78,6 +79,12 @@ void RV5SControlUnit::SetControlSignals(uint32_t instruction)
 
     // F and D Extensions
     case 0b0000111: // F-Type Load (FLW, FLD)
+        if (rvv::IsVectorMemoryInstruction(instruction))
+        {
+            // Vector load: runs entirely in EX (like OP-V). No MEM access or GPR write, and
+            // alu_src stays off so EX sees x[rs2] (the stride) instead of an immediate.
+            break;
+        }
         alu_src_ = true;
         mem_to_reg_ = true;
         reg_write_ = true;
@@ -85,6 +92,10 @@ void RV5SControlUnit::SetControlSignals(uint32_t instruction)
         alu_op_ = 0; // ALU performs ADD for address calculation
         break;
     case 0b0100111: // F-Type Store (FSW, FSD)
+        if (rvv::IsVectorMemoryInstruction(instruction))
+        {
+            break; // vector store: runs entirely in EX, see above
+        }
         alu_src_ = true;
         mem_write_ = true;
         alu_op_ = 0; // ALU performs ADD for address calculation

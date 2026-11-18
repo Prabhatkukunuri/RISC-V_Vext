@@ -730,7 +730,8 @@ uint64_t RV5StageVM_Base::execute_vector(uint32_t instruction, uint64_t rs1_valu
                                          uint64_t rs2_value)
 {
     return rvv::ExecuteVectorInstruction(instruction, rs1_value, rs2_value, registers_,
-                                         current_delta_.register_changes)
+                                         memory_controller_, current_delta_.register_changes,
+                                         current_delta_.memory_changes)
         .rdValue;
 }
 

@@ -611,6 +611,12 @@ enum class SyntaxType
     O_VR_C_VR_C_I_C_V0,   ///< vmerge.vim vd, vs2, simm5, v0
     O_VR_C_GPR,           ///< vmv.v.x vd, rs1
     O_VR_C_I,             ///< vmv.v.i vd, simm5
+
+    // Vector loads/stores: vd|vs3, (rs1)[, stride | index][, v0.t]. A "0" offset before the
+    // parenthesis is accepted, as GNU as does.
+    O_VR_C_LP_GPR_RP,        ///< unit-stride, fault-only-first, mask and whole-register
+    O_VR_C_LP_GPR_RP_C_GPR,  ///< strided: rs2 holds the byte stride
+    O_VR_C_LP_GPR_RP_C_VR,   ///< indexed: vs2 holds the byte offsets
 };
 
 extern std::unordered_map<std::string, RTypeInstructionEncoding> R_type_instruction_encoding_map;
@@ -678,6 +684,8 @@ bool isValidFDSTypeInstruction(const std::string &instruction);
 
 bool isValidVsetInstruction(const std::string &instruction);
 bool isValidVectorArithInstruction(const std::string &instruction);
+/// True for an RVV load/store mnemonic (vle32.v, vlsseg2e8.v, vluxei16.v, vl1re8.v, ...).
+bool isValidVectorMemoryInstruction(const std::string &instruction);
 
 bool isFInstruction(const uint32_t &instruction);
 bool isDInstruction(const uint32_t &instruction);
