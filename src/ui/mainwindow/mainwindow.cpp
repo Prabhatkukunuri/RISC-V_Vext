@@ -224,14 +224,17 @@ void MainWindow::setUpToolBar()
     connect(spinbox, qOverload<int>(&QSpinBox::valueChanged), this,
             [this](int value) { m_processorManager->setStepDelay(value); });
 
+    // While a run is paused (Pause, or a breakpoint) the program can be stepped one
+    // instruction at a time, and undone/redone; Resume continues the run from there.
     connect(pauseAction, &QAction::triggered, this,
-            [this, pauseAction, undoAction, redoAction]()
+            [this, pauseAction, stepAction, undoAction, redoAction]()
             {
                 if (pauseAction->text() == "Pause")
                 {
                     pauseAction->setText("Resume");
                     pauseAction->setIcon(IconManager::getInstance().getIcon(Icon::Resume));
                     pauseAction->setToolTip("Resume execution");
+                    stepAction->setEnabled(true);
                     undoAction->setEnabled(true);
                     redoAction->setEnabled(true);
                     m_processorManager->pause();
@@ -241,6 +244,7 @@ void MainWindow::setUpToolBar()
                     pauseAction->setText("Pause");
                     pauseAction->setIcon(IconManager::getInstance().getIcon(Icon::Pause));
                     pauseAction->setToolTip("Pause execution");
+                    stepAction->setDisabled(true);
                     undoAction->setDisabled(true);
                     redoAction->setDisabled(true);
                     m_processorManager->resume();
@@ -249,11 +253,14 @@ void MainWindow::setUpToolBar()
 
     // we also connect the vm paused at breakpoint signal to change the pause button text
     connect(m_processorManager, &ProcessorManager::processorPausedAtBreakpointSignal, this,
-            [this, pauseAction]()
+            [this, pauseAction, stepAction, undoAction, redoAction]()
             {
                 pauseAction->setText("Resume");
                 pauseAction->setIcon(IconManager::getInstance().getIcon(Icon::Resume));
                 pauseAction->setToolTip("Resume execution");
+                stepAction->setEnabled(true);
+                undoAction->setEnabled(true);
+                redoAction->setEnabled(true);
             });
 
     connect(stepAction, &QAction::triggered, this, [this]() { m_processorManager->step(); });
@@ -548,7 +555,7 @@ void MainWindow::runFinishedSlot()
             // in case we stop while paused
         }
 
-        if (action->text() == "Pause" || action->text() == "Stop")
+        if (action->text() == "Pause" || action->text() == "Stop" || action->text() == "Step")
         {
             action->setDisabled(true);
         }

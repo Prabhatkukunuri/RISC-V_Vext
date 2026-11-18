@@ -83,6 +83,18 @@ enum class VectorArithOp
     Sbc,    ///< vd[i] = vs2[i] - src - v0.mask[i] (every body element)
     Madc,   ///< mask bit i = carry out of vs2[i] + src [+ v0.mask[i] when vm = 0]
     Msbc,   ///< mask bit i = borrow out of vs2[i] - src [- v0.mask[i] when vm = 0]
+
+    // Section 16, permutation (shape Permute): each has its own element mapping.
+    MoveXS,     ///< x[rd] = sign-extended vs2[0]                      (vmv.x.s)
+    MoveSX,     ///< vd[0] = x[rs1] if vstart < vl                     (vmv.s.x)
+    SlideUp,    ///< vd[i + OFFSET] = vs2[i]; vd[i < OFFSET] unchanged
+    SlideDown,  ///< vd[i] = vs2[i + OFFSET], 0 past VLMAX
+    Slide1Up,   ///< vd[0] = x[rs1], vd[i + 1] = vs2[i]
+    Slide1Down, ///< vd[i] = vs2[i + 1], vd[vl - 1] = x[rs1]
+    Gather,     ///< vd[i] = index >= VLMAX ? 0 : vs2[index], index = vs1[i] | x[rs1] | uimm
+    GatherEi16, ///< vrgather with 16-bit indices in vs1 (EMUL = 16/SEW * LMUL)
+    Compress,   ///< pack the vs2 elements whose bit in mask vs1 is set to the start of vd
+    WholeMove,  ///< copy NREG = vs1 field + 1 whole registers (vmv<nr>r.v)
 };
 
 /**
@@ -96,6 +108,7 @@ enum class VectorOpShape
     Extension,   ///< vd is SEW, vs2 is SEW/factor (vzext.vf2, vsext.vf8, ...)
     Narrowing,   ///< vd and the source are SEW, vs2 is 2*SEW (vnsrl.wv, vnsra.wi, ...)
     Compare,     ///< vs2 and the source are SEW; vd is a mask (one bit per element, one register)
+    Permute,     ///< section 16: slides, gathers, compress and moves (see VectorArithOp)
 };
 
 /**
@@ -135,7 +148,7 @@ inline bool HasSourceFirstSyntax(const VectorArithInfo &info)
 
 /**
  * @brief True if the .vi form takes an unsigned 5-bit immediate (uimm, 0..31) rather than a
- * signed one (simm5, -16..15). So far: the shifts.
+ * signed one (simm5, -16..15): the shifts, the slides and vrgather.vi.
  */
 bool HasUnsignedImmediate(const VectorArithInfo &info);
 

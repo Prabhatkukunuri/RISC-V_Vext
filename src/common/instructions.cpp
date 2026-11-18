@@ -329,6 +329,24 @@ std::unordered_map<Instruction, InstructionEncoding> instruction_encoding_map = 
     {Instruction::kvmsbc_vxm, {0b1010111, -1, 0b100, -1, 0b010011, -1}},
     {Instruction::kvmsbc_vv, {0b1010111, -1, 0b000, -1, 0b010011, -1}},
     {Instruction::kvmsbc_vx, {0b1010111, -1, 0b100, -1, 0b010011, -1}},
+    // 16 Permutation (vmv.x.s and vmv<nr>r.v: the vs1 field is fixed)
+    {Instruction::kvmv_x_s, {0b1010111, -1, 0b010, 0b00000, 0b010000, -1}},
+    {Instruction::kvmv_s_x, {0b1010111, -1, 0b110, -1, 0b010000, -1}},
+    {Instruction::kvslideup_vx, {0b1010111, -1, 0b100, -1, 0b001110, -1}},
+    {Instruction::kvslideup_vi, {0b1010111, -1, 0b011, -1, 0b001110, -1}},
+    {Instruction::kvslidedown_vx, {0b1010111, -1, 0b100, -1, 0b001111, -1}},
+    {Instruction::kvslidedown_vi, {0b1010111, -1, 0b011, -1, 0b001111, -1}},
+    {Instruction::kvslide1up_vx, {0b1010111, -1, 0b110, -1, 0b001110, -1}},
+    {Instruction::kvslide1down_vx, {0b1010111, -1, 0b110, -1, 0b001111, -1}},
+    {Instruction::kvrgather_vv, {0b1010111, -1, 0b000, -1, 0b001100, -1}},
+    {Instruction::kvrgather_vx, {0b1010111, -1, 0b100, -1, 0b001100, -1}},
+    {Instruction::kvrgather_vi, {0b1010111, -1, 0b011, -1, 0b001100, -1}},
+    {Instruction::kvrgatherei16_vv, {0b1010111, -1, 0b000, -1, 0b001110, -1}},
+    {Instruction::kvcompress_vm, {0b1010111, -1, 0b010, -1, 0b010111, -1}},
+    {Instruction::kvmv1r_v, {0b1010111, -1, 0b011, 0b00000, 0b100111, -1}},
+    {Instruction::kvmv2r_v, {0b1010111, -1, 0b011, 0b00001, 0b100111, -1}},
+    {Instruction::kvmv4r_v, {0b1010111, -1, 0b011, 0b00011, 0b100111, -1}},
+    {Instruction::kvmv8r_v, {0b1010111, -1, 0b011, 0b00111, 0b100111, -1}},
 
     {Instruction::kfmadd_s, {0b1000011, 0b00, -1, -1, -1, -1}},
     {Instruction::kfmsub_s, {0b1000111, 0b00, -1, -1, -1, -1}},
@@ -633,6 +651,23 @@ std::unordered_map<std::string, Instruction> instruction_string_map = {
     {"vmsbc.vxm", Instruction::kvmsbc_vxm},
     {"vmsbc.vv", Instruction::kvmsbc_vv},
     {"vmsbc.vx", Instruction::kvmsbc_vx},
+    {"vmv.x.s", Instruction::kvmv_x_s},
+    {"vmv.s.x", Instruction::kvmv_s_x},
+    {"vslideup.vx", Instruction::kvslideup_vx},
+    {"vslideup.vi", Instruction::kvslideup_vi},
+    {"vslidedown.vx", Instruction::kvslidedown_vx},
+    {"vslidedown.vi", Instruction::kvslidedown_vi},
+    {"vslide1up.vx", Instruction::kvslide1up_vx},
+    {"vslide1down.vx", Instruction::kvslide1down_vx},
+    {"vrgather.vv", Instruction::kvrgather_vv},
+    {"vrgather.vx", Instruction::kvrgather_vx},
+    {"vrgather.vi", Instruction::kvrgather_vi},
+    {"vrgatherei16.vv", Instruction::kvrgatherei16_vv},
+    {"vcompress.vm", Instruction::kvcompress_vm},
+    {"vmv1r.v", Instruction::kvmv1r_v},
+    {"vmv2r.v", Instruction::kvmv2r_v},
+    {"vmv4r.v", Instruction::kvmv4r_v},
+    {"vmv8r.v", Instruction::kvmv8r_v},
 
     {"fmadd.s", Instruction::kfmadd_s},
     {"fmsub.s", Instruction::kfmsub_s},
@@ -702,6 +737,8 @@ static const std::unordered_set<std::string> valid_instructions = {
     "vwmaccus.vx", "vmerge.vvm", "vmerge.vxm", "vmerge.vim", "vmv.v.v", "vmv.v.x", "vmv.v.i",
     "vadc.vvm", "vadc.vxm", "vadc.vim", "vmadc.vvm", "vmadc.vxm", "vmadc.vim", "vmadc.vv",
     "vmadc.vx", "vmadc.vi", "vsbc.vvm", "vsbc.vxm", "vmsbc.vvm", "vmsbc.vxm", "vmsbc.vv", "vmsbc.vx",
+    // Permutation
+    "vmv.x.s", "vmv.s.x", "vslideup.vx", "vslideup.vi", "vslidedown.vx", "vslidedown.vi", "vslide1up.vx", "vslide1down.vx", "vrgather.vv", "vrgather.vx", "vrgather.vi", "vrgatherei16.vv", "vcompress.vm", "vmv1r.v", "vmv2r.v", "vmv4r.v", "vmv8r.v",
     // Compare aliases (the parser rewrites them; see v_formats.cpp)
     "vmsgt.vv", "vmsgtu.vv", "vmsge.vv", "vmsgeu.vv", "vmslt.vi", "vmsltu.vi", "vmsge.vi",
     "vmsgeu.vi"
@@ -814,7 +851,8 @@ static const std::unordered_set<std::string> VectorArithInstructions = {
     "vnmsub.vx", "vwmaccu.vv", "vwmaccu.vx", "vwmacc.vv", "vwmacc.vx", "vwmaccsu.vv", "vwmaccsu.vx",
     "vwmaccus.vx", "vmerge.vvm", "vmerge.vxm", "vmerge.vim", "vmv.v.v", "vmv.v.x", "vmv.v.i",
     "vadc.vvm", "vadc.vxm", "vadc.vim", "vmadc.vvm", "vmadc.vxm", "vmadc.vim", "vmadc.vv",
-    "vmadc.vx", "vmadc.vi", "vsbc.vvm", "vsbc.vxm", "vmsbc.vvm", "vmsbc.vxm", "vmsbc.vv", "vmsbc.vx"};
+    "vmadc.vx", "vmadc.vi", "vsbc.vvm", "vsbc.vxm", "vmsbc.vvm", "vmsbc.vxm", "vmsbc.vv", "vmsbc.vx",
+    "vmv.x.s", "vmv.s.x", "vslideup.vx", "vslideup.vi", "vslidedown.vx", "vslidedown.vi", "vslide1up.vx", "vslide1down.vx", "vrgather.vv", "vrgather.vx", "vrgather.vi", "vrgatherei16.vv", "vcompress.vm", "vmv1r.v", "vmv2r.v", "vmv4r.v", "vmv8r.v"};
 
 static const std::unordered_set<std::string> MExtensionInstructions = {
     "mul",  "mulh", "mulhsu", "mulhu", "div",  "divu", "rem",
@@ -1468,6 +1506,23 @@ std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map 
     {"vmsbc.vxm", {SyntaxType::O_VR_C_VR_C_GPR_C_V0}},
     {"vmsbc.vv", {SyntaxType::O_VR_C_VR_C_VR}},
     {"vmsbc.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vmv.x.s", {SyntaxType::O_GPR_C_VR}},
+    {"vmv.s.x", {SyntaxType::O_VR_C_GPR}},
+    {"vslideup.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vslideup.vi", {SyntaxType::O_VR_C_VR_C_I}},
+    {"vslidedown.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vslidedown.vi", {SyntaxType::O_VR_C_VR_C_I}},
+    {"vslide1up.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vslide1down.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vrgather.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vrgather.vx", {SyntaxType::O_VR_C_VR_C_GPR}},
+    {"vrgather.vi", {SyntaxType::O_VR_C_VR_C_I}},
+    {"vrgatherei16.vv", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vcompress.vm", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vmv1r.v", {SyntaxType::O_VR_C_VR}},
+    {"vmv2r.v", {SyntaxType::O_VR_C_VR}},
+    {"vmv4r.v", {SyntaxType::O_VR_C_VR}},
+    {"vmv8r.v", {SyntaxType::O_VR_C_VR}},
     // Compare aliases, rewritten by the parser into the instructions above.
     {"vmsgt.vv", {SyntaxType::O_VR_C_VR_C_VR}},
     {"vmsgtu.vv", {SyntaxType::O_VR_C_VR_C_VR}},
@@ -1765,6 +1820,7 @@ std::string getExpectedSyntaxes(const std::string &opcode)
         {SyntaxType::O_VR_C_VR_C_I_C_V0, "<v-reg>, <v-reg>, <simm5>, v0"},
         {SyntaxType::O_VR_C_GPR, "<v-reg>, <gp-reg>"},
         {SyntaxType::O_VR_C_I, "<v-reg>, <simm5>"},
+        {SyntaxType::O_GPR_C_VR, "<gp-reg>, <v-reg>"},
         {SyntaxType::O_VR_C_LP_GPR_RP, "<v-reg>, (<gp-reg>)[, v0.t]"},
         {SyntaxType::O_VR_C_LP_GPR_RP_C_GPR, "<v-reg>, (<gp-reg>), <gp-reg>[, v0.t]"},
         {SyntaxType::O_VR_C_LP_GPR_RP_C_VR, "<v-reg>, (<gp-reg>), <v-reg>[, v0.t]"},
@@ -2418,10 +2474,15 @@ std::string disassemble(uint32_t instruction)
             }
         }
         const bool masked = ((instruction >> 25) & 1) == 0;
+        if (info->op == rvv::VectorArithOp::MoveXS) // vmv.x.s rd, vs2
+        {
+            return std::string(info->mnemonic) + " " + xr(rd) + ", " + vr(rs2);
+        }
         const std::string name = std::string(info->mnemonic) + " " + vr(rd);
         switch (info->op)
         {
-        case rvv::VectorArithOp::Move: // vmv.v.* vd, source
+        case rvv::VectorArithOp::Move:   // vmv.v.* vd, source
+        case rvv::VectorArithOp::MoveSX: // vmv.s.x vd, rs1
             return name + source;
         default:
             break;

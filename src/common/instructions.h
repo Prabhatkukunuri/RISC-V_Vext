@@ -336,7 +336,25 @@ enum class Instruction
     kvmsbc_vvm,
     kvmsbc_vxm,
     kvmsbc_vv,
-    kvmsbc_vx
+    kvmsbc_vx,
+    // 16 Permutation
+    kvmv_x_s,
+    kvmv_s_x,
+    kvslideup_vx,
+    kvslideup_vi,
+    kvslidedown_vx,
+    kvslidedown_vi,
+    kvslide1up_vx,
+    kvslide1down_vx,
+    kvrgather_vv,
+    kvrgather_vx,
+    kvrgather_vi,
+    kvrgatherei16_vv,
+    kvcompress_vm,
+    kvmv1r_v,
+    kvmv2r_v,
+    kvmv4r_v,
+    kvmv8r_v
 };
 
 // TODO: use enum class for instruction encoding
@@ -611,6 +629,7 @@ enum class SyntaxType
     O_VR_C_VR_C_I_C_V0,   ///< vmerge.vim vd, vs2, simm5, v0
     O_VR_C_GPR,           ///< vmv.v.x vd, rs1
     O_VR_C_I,             ///< vmv.v.i vd, simm5
+    O_GPR_C_VR,           ///< vmv.x.s rd, vs2
 
     // Vector loads/stores: vd|vs3, (rs1)[, stride | index][, v0.t]. A "0" offset before the
     // parenthesis is accepted, as GNU as does.

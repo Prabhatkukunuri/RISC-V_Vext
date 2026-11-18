@@ -156,6 +156,9 @@ class ProcessorBase : public QObject
     void ClearStop();
     virtual void SetActiveWireNames() = 0;
     virtual void setProcessorState() = 0;
+    /// PC of the instruction the next Step() executes (what Run() records as
+    /// last_executed_pc_ before each step, for the profiler).
+    virtual uint64_t PcExecutedByNextStep() const { return program_counter_; }
 
     void PrintString(uint64_t address);
 

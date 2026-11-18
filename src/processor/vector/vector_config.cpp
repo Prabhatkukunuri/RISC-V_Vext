@@ -216,13 +216,34 @@ constexpr VectorArithInfo kVectorArith[] = {
     {0b010011, FUNCT3_OPIVX, -1, Op::Msbc, Shape::Compare, U, 1, "vmsbc.vxm", -1, 0},
     {0b010011, FUNCT3_OPIVV, -1, Op::Msbc, Shape::Compare, U, 1, "vmsbc.vv", -1, 1},
     {0b010011, FUNCT3_OPIVX, -1, Op::Msbc, Shape::Compare, U, 1, "vmsbc.vx", -1, 1},
+
+    // 16 Permutation. vmv.x.s / vmv.s.x, vcompress and vmv<nr>r.v exist only unmasked (vm = 1).
+    // vmv<nr>r.v keeps NREG - 1 in the vs1 field (0, 1, 3, 7; other values are reserved).
+    {0b010000, FUNCT3_OPMVV, 0, Op::MoveXS, Shape::Permute, S, 1, "vmv.x.s", -1, 1},
+    {0b010000, FUNCT3_OPMVX, -1, Op::MoveSX, Shape::Permute, U, 1, "vmv.s.x", -1, 1},
+    {0b001110, FUNCT3_OPIVX, -1, Op::SlideUp, Shape::Permute, U, 1, "vslideup.vx"},
+    {0b001110, FUNCT3_OPIVI, -1, Op::SlideUp, Shape::Permute, U, 1, "vslideup.vi"},
+    {0b001111, FUNCT3_OPIVX, -1, Op::SlideDown, Shape::Permute, U, 1, "vslidedown.vx"},
+    {0b001111, FUNCT3_OPIVI, -1, Op::SlideDown, Shape::Permute, U, 1, "vslidedown.vi"},
+    {0b001110, FUNCT3_OPMVX, -1, Op::Slide1Up, Shape::Permute, U, 1, "vslide1up.vx"},
+    {0b001111, FUNCT3_OPMVX, -1, Op::Slide1Down, Shape::Permute, U, 1, "vslide1down.vx"},
+    {0b001100, FUNCT3_OPIVV, -1, Op::Gather, Shape::Permute, U, 1, "vrgather.vv"},
+    {0b001100, FUNCT3_OPIVX, -1, Op::Gather, Shape::Permute, U, 1, "vrgather.vx"},
+    {0b001100, FUNCT3_OPIVI, -1, Op::Gather, Shape::Permute, U, 1, "vrgather.vi"},
+    {0b001110, FUNCT3_OPIVV, -1, Op::GatherEi16, Shape::Permute, U, 1, "vrgatherei16.vv"},
+    {0b010111, FUNCT3_OPMVV, -1, Op::Compress, Shape::Permute, U, 1, "vcompress.vm", -1, 1},
+    {0b100111, FUNCT3_OPIVI, 0, Op::WholeMove, Shape::Permute, U, 1, "vmv1r.v", -1, 1},
+    {0b100111, FUNCT3_OPIVI, 1, Op::WholeMove, Shape::Permute, U, 2, "vmv2r.v", -1, 1},
+    {0b100111, FUNCT3_OPIVI, 3, Op::WholeMove, Shape::Permute, U, 4, "vmv4r.v", -1, 1},
+    {0b100111, FUNCT3_OPIVI, 7, Op::WholeMove, Shape::Permute, U, 8, "vmv8r.v", -1, 1},
 };
 } // namespace
 
 bool HasUnsignedImmediate(const VectorArithInfo &info)
 {
     return info.op == VectorArithOp::Sll || info.op == VectorArithOp::Srl ||
-           info.op == VectorArithOp::Sra;
+           info.op == VectorArithOp::Sra || info.op == VectorArithOp::SlideUp ||
+           info.op == VectorArithOp::SlideDown || info.op == VectorArithOp::Gather;
 }
 
 const VectorArithInfo *DecodeVectorArith(uint32_t instruction)

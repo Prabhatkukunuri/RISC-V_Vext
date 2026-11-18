@@ -55,8 +55,18 @@ int MemoryModel::columnCount(const QModelIndex &parent) const
 
 void MemoryModel::setRowsVisible(int rows)
 {
+    // In ascending order keep the top row where it is (address 0 at start-up) as the table
+    // grows or shrinks, instead of re-centring around the middle row.
+    uint64_t top = 0;
+    const bool topInMemory = rowAddress(0, top);
     beginResetModel();
     m_rowsVisible = rows;
+    if (m_ascending)
+    {
+        const int64_t half = static_cast<int64_t>(m_rowsVisible / 2) * 8;
+        m_currentCentralAddress =
+            clampCentralAddress(static_cast<int64_t>(topInMemory ? top : 0) + half);
+    }
     endResetModel();
 }
 

@@ -259,18 +259,27 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
     //   vmacc, vwmacc, ...  vd, source, vs2[, v0.t]
     //   vmerge, vadc, ...   vd, vs2, source, v0       (fixed vm = 0: v0 is data, required)
     //   vmadc.vv, ...       vd, vs2, source           (fixed vm = 1: never masked)
-    //   vmv.v.*             vd, source                (never masked; vs2 is encoded as v0)
+    //   vmv.v.*, vmv.s.x    vd, source                (never masked; vs2 is encoded as v0)
+    //   vmv.x.s             rd, vs2                   (a GPR destination; never masked)
     enum class MaskOperand
     {
         Optional,
         Required,
         None
     };
-    std::vector<TokenType> operands{TokenType::VEC_REGISTER};
+    const bool gprDestination = op == rvv::VectorArithOp::MoveXS;
+    std::vector<TokenType> operands{gprDestination ? TokenType::GP_REGISTER
+                                                   : TokenType::VEC_REGISTER};
     int vs2At = -1;    // operand index of vs2, -1 if it is implicitly v0
     int sourceAt = -1; // operand index of the source, -1 if there is none
     MaskOperand maskOperand = MaskOperand::Optional;
-    if (op == rvv::VectorArithOp::Move)
+    if (gprDestination)
+    {
+        operands.push_back(TokenType::VEC_REGISTER);
+        vs2At = 1;
+        maskOperand = MaskOperand::None;
+    }
+    else if (op == rvv::VectorArithOp::Move || op == rvv::VectorArithOp::MoveSX)
     {
         operands.push_back(sourceType.value_or(TokenType::VEC_REGISTER));
         sourceAt = 1;
@@ -384,12 +393,27 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
                           "vd cannot be the same register as a source with a narrower element "
                           "width");
         }
+        // Section 16: slide-ups, vrgather and vcompress may not overlap their sources at all.
+        const bool noVs2Overlap = op == rvv::VectorArithOp::SlideUp ||
+                                  op == rvv::VectorArithOp::Slide1Up ||
+                                  op == rvv::VectorArithOp::Gather ||
+                                  op == rvv::VectorArithOp::GatherEi16 ||
+                                  op == rvv::VectorArithOp::Compress;
+        const bool noVs1Overlap = (op == rvv::VectorArithOp::Gather ||
+                                   op == rvv::VectorArithOp::GatherEi16 ||
+                                   op == rvv::VectorArithOp::Compress) &&
+                                  sourceKind == TokenType::VEC_REGISTER;
+        if ((noVs2Overlap && vd.value == vs2) || (noVs1Overlap && vd.value == source.value))
+        {
+            return reject(vd, "Destination overlaps a source",
+                          "For slide-ups, vrgather and vcompress, vd must not overlap a source");
+        }
     }
 
     ICUnit block;
     block.setLineNumber(line);
     block.setInstructionIndex(instruction_index_);
-    block.setRd(vd.value);
+    block.setRd(gprDestination ? reg_alias_to_name.at(vd.value) : vd.value);
     block.setRs2(vs2);
     block.setVm(masked ? 0 : 1);
 
@@ -497,6 +521,11 @@ bool Parser::parse_O_VR_C_GPR()
 bool Parser::parse_O_VR_C_I()
 {
     return parseVectorArith(TokenType::NUM);
+}
+
+bool Parser::parse_O_GPR_C_VR()
+{
+    return parseVectorArith(std::nullopt); // vmv.x.s rd, vs2
 }
 
 bool Parser::parseVectorMemory(TokenType extraType)

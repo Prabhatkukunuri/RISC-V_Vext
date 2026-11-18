@@ -18,6 +18,14 @@ on the single-cycle VM and all four 5-stage pipeline variants.
 | Widening add/subtract | `vwaddu`, `vwadd`, `vwsubu`, `vwsub` (`.vv` / `.vx` / `.wv` / `.wx`) |
 | Integer extension | `vzext.vf2/.vf4/.vf8`, `vsext.vf2/.vf4/.vf8` |
 | Bitwise logical | `vand`, `vor`, `vxor` (`.vv` / `.vx` / `.vi`) |
+| Shifts | `vsll`, `vsrl`, `vsra`; narrowing `vnsrl`, `vnsra` (`.wv` / `.wx` / `.wi`) |
+| Add-with-carry | `vadc`, `vsbc`, `vmadc`, `vmsbc` |
+| Compare (write a mask) | `vmseq`, `vmsne`, `vmslt(u)`, `vmsle(u)`, `vmsgt(u)`, plus the `vmsge(u)` / `vmsgt.vv` aliases |
+| Min/max | `vmin(u)`, `vmax(u)` |
+| Multiply/divide | `vmul`, `vmulh(u/su)`, `vdiv(u)`, `vrem(u)`, widening `vwmul(u/su)` |
+| Multiply-add | `vmacc`, `vnmsac`, `vmadd`, `vnmsub`, widening `vwmacc(u/su/us)` |
+| Merge/move | `vmerge`, `vmv.v.v` / `.v.x` / `.v.i` |
+| Permutation (section 16) | `vmv.x.s`, `vmv.s.x`, `vslideup`, `vslidedown`, `vslide1up`, `vslide1down`, `vrgather` (`.vv` / `.vx` / `.vi`), `vrgatherei16.vv`, `vcompress.vm`, `vmv1r.v` / `vmv2r.v` / `vmv4r.v` / `vmv8r.v` |
 | Loads and stores | the complete set from spec section 7 (316 mnemonics), listed below |
 
 Loads and stores cover every addressing mode:
@@ -37,6 +45,7 @@ Common behaviour:
 - **Tail and masked-off elements:** left undisturbed, as Spike does.
 - **Illegal configurations trap:** for example running a vector instruction before any `vsetvli`, a misaligned register group, an EMUL outside 1/8–8, or a masked instruction writing `v0`.
 - **Undo/redo:** works for vector registers, vector CSRs and memory written by vector stores.
+- **Misaligned elements** (spec section 8) are transferred, the same way scalar misaligned loads and stores are.
 
 ### Vector tab
 
@@ -50,6 +59,16 @@ The **Vector** entry at the bottom of the sidebar shows the vector state while a
 - **Hovering over `v0`** shows it as a mask.
 
 The editor highlights and autocompletes the vector mnemonics, `v0`–`v31` and `v0.t`.
+
+The **Memory** tab highlights the bytes written by the latest store (scalar or vector). **Go to .data** jumps to the
+start of the data section, **Go to last write** to the latest store, and the rows can be listed in ascending or
+descending address order.
+
+### Running a program step by step
+
+**Run** executes the program at the speed set in the box next to it (milliseconds per instruction). **Pause** stops
+it; while paused, **Step** executes one instruction, **Undo** / **Redo** move back and forward, and **Resume**
+continues the run. The editor highlights the current line throughout.
 
 ### Example
 
@@ -70,6 +89,8 @@ nums:   .word 10, 20, 30, 40, 50, 60, 70, 80     # 0x10000000
 
 A longer example covering every kind of load and store, with the expected result written next to each
 instruction, is in [`examples/vector_demo.s`](examples/vector_demo.s).
+[`examples/vector_gui_walkthrough.s`](examples/vector_gui_walkthrough.s) is meant for the GUI: it covers loads,
+compares, widening/narrowing, permutations and stores, also with the expected results written next to each line.
 
 ### Checking results in the dump files
 
@@ -182,10 +203,15 @@ The vector extension has its own suites:
 | `test/vset_test.cpp` | `vsetvli` / `vsetivli` / `vsetvl` |
 | `test/vector_int_arith_test.cpp` | `vadd` / `vsub` / `vrsub` |
 | `test/vector_widen_ext_logic_test.cpp` | widening, extension and logical instructions |
-| `test/vector_load_store_test.cpp` | all loads and stores |
+| `test/vector_shift_test.cpp`, `test/vector_narrow_shift_test.cpp` | single-width and narrowing shifts |
+| `test/vector_compare_test.cpp` | compares and their aliases |
+| `test/vector_mul_div_test.cpp` | min/max, multiply, divide, multiply-add, merge/move |
+| `test/vector_carry_test.cpp` | add-with-carry / subtract-with-borrow |
+| `test/vector_load_store_test.cpp` | all loads and stores, including misaligned elements |
+| `test/vector_permute_test.cpp` | permutation instructions |
 
 Encodings are checked against LLVM (`llvm-mc`) and the official `riscv-opcodes` tables, and every program runs on
-all five VMs. The full suite has 226 tests, all passing.
+all five VMs. The full suite has 297 tests, all passing.
 
 ## CLI
 
@@ -193,8 +219,10 @@ See [docs/CLI.md](docs/CLI.md) for how to build and use the headless command-lin
 
 ## Known limitations
 
-- **Not implemented yet:** vector compare/mask, multiply/divide, min/max, shift, fixed-point, reduction, permutation
-  and move instructions (such as `vmv.s.x`).
+- **Not implemented yet:** fixed-point (saturating, averaging, `vsmul`, scaling shifts, `vnclip`), reductions,
+  mask-register instructions (`vmand`..., `vcpop.m`, `vfirst.m`, `vmsbf.m`..., `viota.m`, `vid.v`) and all vector
+  floating-point instructions, including the floating-point permutations `vfmv.f.s`, `vfmv.s.f`,
+  `vfslide1up.vf` and `vfslide1down.vf`.
 - **`la` / `auipc`:** give wrong values on the pipelined VMs, so build addresses with `lui`.
 - **CSR instructions:** not executed by the pipelined VMs.
 - **`kites-cli --vm rv5-*`:** does not finish, even for scalar programs. The single-cycle VM (the default) works,

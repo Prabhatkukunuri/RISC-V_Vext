@@ -56,7 +56,7 @@ class MemoryModel : public QAbstractTableModel
     int m_rowsVisible = 10; // it does not matter as it will be calculater later anyways
     // well caculate which row to show when user scrolls pass
     // the current window with this
-    uint64_t m_currentCentralAddress = 64; // always a multiple of 8
+    uint64_t m_currentCentralAddress = 0; // always a multiple of 8
     Base m_displayBase = Base::Hexadecimal;
     MemoryController *m_memoryController;
     bool m_ascending = true;

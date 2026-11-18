@@ -327,6 +327,8 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
     case VectorOpShape::Compare:
         dest = {1, 0}; // a mask: one register, whatever LMUL is
         break;
+    case VectorOpShape::Permute:
+        break; // handled by ExecutePermute()
     }
     const uint64_t opWidth = std::max(dest.eew, src2.eew);
 
@@ -512,6 +514,230 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
     recorder.Record(changes);
     ClearVstart(registers, changes);
 }
+
+/**
+ * Section 16, permutation instructions. Like the rest of this file, tail and masked-off
+ * elements are left undisturbed, and nothing is written when vstart >= vl.
+ */
+void ExecutePermute(const VectorArithInfo &info, uint32_t instruction, uint64_t rs1Value,
+                    RegisterFile &registers, std::vector<RegisterChange> &changes,
+                    VectorExecResult &result)
+{
+    const uint32_t vd = (instruction >> 7) & 0x1F;
+    const uint32_t field19_15 = (instruction >> 15) & 0x1F; // vs1, rs1, uimm or NREG - 1
+    const uint32_t vs2 = (instruction >> 20) & 0x1F;
+    const bool masked = ((instruction >> 25) & 1) == 0;
+    const uint64_t vlenBits = registers.GetVlenBytes() * 8;
+    const uint64_t vstart = registers.ReadCsr(RegisterFile::CSR_VSTART);
+
+    // vmv<nr>r.v ignores vtype and vl: it copies NREG whole registers. EEW = SEW, so vstart
+    // counts SEW-wide elements (bytes if vtype.vill is set).
+    if (info.op == VectorArithOp::WholeMove)
+    {
+        const uint32_t nreg = info.factor;
+        if (vd % nreg != 0 || vs2 % nreg != 0)
+        {
+            ThrowIllegal(instruction, "vd and vs2 must be aligned to " + std::to_string(nreg) +
+                                          " registers");
+        }
+        Vtype vtype;
+        const uint64_t eewBytes =
+            DecodeVtype(registers.ReadCsr(RegisterFile::CSR_VTYPE), vtype) ? vtype.sew / 8 : 1;
+        const uint64_t totalBytes = nreg * registers.GetVlenBytes();
+        DestinationRecorder recorder(registers, vd, nreg);
+        if (vd != vs2) // vd == vs2 is a NOP
+        {
+            for (uint64_t byte = vstart * eewBytes; byte < totalBytes; ++byte)
+            {
+                registers.WriteVectorElement(vd, byte, 8,
+                                             registers.ReadVectorElement(vs2, byte, 8));
+            }
+        }
+        recorder.Record(changes);
+        ClearVstart(registers, changes);
+        return;
+    }
+
+    const Vtype vtype = RequireValidVtype(instruction, registers);
+    const uint64_t sew = vtype.sew;
+    const int lmul = vtype.lmulLog2;
+    const int group = GroupRegs(lmul);
+    const uint64_t vlmax = Vlmax(vtype, vlenBits);
+    const uint64_t vl = registers.ReadCsr(RegisterFile::CSR_VL);
+    const auto active = [&](uint64_t i) { return !masked || registers.ReadMaskBit(0, i); };
+
+    // vmv.x.s and vmv.s.x act on element 0 of a single register, whatever LMUL is.
+    if (info.op == VectorArithOp::MoveXS)
+    {
+        // Runs even when vl = 0 or vstart >= vl. SEW < XLEN: sign-extended to XLEN.
+        result.writesRd = true;
+        result.rdValue = Extend(registers.ReadVectorElement(vs2, 0, sew), sew, true);
+        ClearVstart(registers, changes);
+        return;
+    }
+    if (info.op == VectorArithOp::MoveSX)
+    {
+        if (vs2 != 0)
+        {
+            ThrowIllegal(instruction, "vmv.s.x is reserved unless its vs2 field is v0");
+        }
+        DestinationRecorder recorder(registers, vd, 1);
+        if (vstart < vl)
+        {
+            registers.WriteVectorElement(vd, 0, sew, rs1Value & SewMask(sew)); // low SEW bits
+        }
+        recorder.Record(changes);
+        ClearVstart(registers, changes);
+        return;
+    }
+
+    if (masked && vd == 0)
+    {
+        ThrowIllegal(instruction, "a masked instruction cannot write v0");
+    }
+    RequireAligned(instruction, vd, lmul, "vd");
+    RequireAligned(instruction, vs2, lmul, "vs2");
+
+    // The OFFSET of a slide and the index of vrgather.vx/.vi: x[rs1] as an unsigned XLEN value
+    // (not truncated to SEW), or the 5-bit uimm zero-extended.
+    const uint32_t funct3 = (instruction >> 12) & 0x7;
+    const uint64_t scalar = funct3 == FUNCT3_OPIVI ? field19_15 : rs1Value;
+
+    const bool vs1IsVector = info.op == VectorArithOp::GatherEi16 ||
+                             info.op == VectorArithOp::Compress ||
+                             (info.op == VectorArithOp::Gather && funct3 == FUNCT3_OPIVV);
+    int vs1Log2 = lmul;
+    if (info.op == VectorArithOp::GatherEi16)
+    {
+        // The indices are 16 bits wide: EMUL = (16 / SEW) * LMUL.
+        int sewLog2 = 0;
+        while ((8u << sewLog2) < sew)
+        {
+            ++sewLog2;
+        }
+        vs1Log2 = lmul + 1 - sewLog2;
+        if (vs1Log2 < -3 || vs1Log2 > 3)
+        {
+            ThrowIllegal(instruction, "the 16-bit index EMUL would be outside 1/8..8");
+        }
+    }
+    if (info.op == VectorArithOp::Compress)
+    {
+        vs1Log2 = 0; // the selecting mask is a single register
+        if (vstart != 0)
+        {
+            ThrowIllegal(instruction, "vcompress.vm requires vstart = 0");
+        }
+    }
+    else if (vs1IsVector)
+    {
+        RequireAligned(instruction, field19_15, vs1Log2, "vs1");
+    }
+
+    // Slide-ups, vrgather and vcompress may not overlap their sources at all.
+    const bool noVs2Overlap = info.op == VectorArithOp::SlideUp ||
+                              info.op == VectorArithOp::Slide1Up ||
+                              info.op == VectorArithOp::Gather ||
+                              info.op == VectorArithOp::GatherEi16 ||
+                              info.op == VectorArithOp::Compress;
+    if (noVs2Overlap && IsOverlapped(vd, group, vs2, group))
+    {
+        ThrowIllegal(instruction, "vd overlaps the vs2 group");
+    }
+    if (vs1IsVector && IsOverlapped(vd, group, field19_15, GroupRegs(vs1Log2)))
+    {
+        ThrowIllegal(instruction, "vd overlaps the vs1 group");
+    }
+
+    // Sources can be read anywhere below VLMAX (not just vl), so snapshot the vs2 group before
+    // writing vd: vslidedown may slide a group onto itself.
+    std::vector<uint64_t> src(vlmax);
+    for (uint64_t i = 0; i < vlmax; ++i)
+    {
+        src[i] = registers.ReadVectorElement(vs2, i, sew);
+    }
+    const uint64_t scalarAtSew = scalar & SewMask(sew); // slide1up/down insert the low SEW bits
+
+    DestinationRecorder recorder(registers, vd, group);
+    switch (info.op)
+    {
+    case VectorArithOp::SlideUp:
+        // Elements below OFFSET are unchanged.
+        for (uint64_t i = std::max(vstart, scalar); i < vl; ++i)
+        {
+            if (active(i))
+            {
+                registers.WriteVectorElement(vd, i, sew, src[i - scalar]);
+            }
+        }
+        break;
+    case VectorArithOp::SlideDown:
+        for (uint64_t i = vstart; i < vl; ++i)
+        {
+            if (active(i))
+            {
+                const bool inRange = scalar < vlmax && i + scalar < vlmax; // else it reads 0
+                registers.WriteVectorElement(vd, i, sew, inRange ? src[i + scalar] : 0);
+            }
+        }
+        break;
+    case VectorArithOp::Slide1Up:
+        for (uint64_t i = vstart; i < vl; ++i)
+        {
+            if (active(i))
+            {
+                registers.WriteVectorElement(vd, i, sew, i == 0 ? scalarAtSew : src[i - 1]);
+            }
+        }
+        break;
+    case VectorArithOp::Slide1Down:
+        for (uint64_t i = vstart; i < vl; ++i)
+        {
+            if (active(i))
+            {
+                registers.WriteVectorElement(vd, i, sew,
+                                             i + 1 == vl ? scalarAtSew : src[i + 1]);
+            }
+        }
+        break;
+    case VectorArithOp::Gather:
+    case VectorArithOp::GatherEi16:
+        for (uint64_t i = vstart; i < vl; ++i)
+        {
+            if (!active(i))
+            {
+                continue;
+            }
+            uint64_t index = scalar; // .vx / .vi: the same index for every element
+            if (info.op == VectorArithOp::GatherEi16)
+            {
+                index = registers.ReadVectorElement(field19_15, i, 16);
+            }
+            else if (funct3 == FUNCT3_OPIVV)
+            {
+                index = registers.ReadVectorElement(field19_15, i, sew);
+            }
+            registers.WriteVectorElement(vd, i, sew, index < vlmax ? src[index] : 0);
+        }
+        break;
+    case VectorArithOp::Compress:
+    {
+        uint64_t packed = 0;
+        for (uint64_t i = 0; i < vl; ++i)
+        {
+            if (registers.ReadMaskBit(field19_15, i))
+            {
+                registers.WriteVectorElement(vd, packed++, sew, src[i]);
+            }
+        }
+        break;
+    }
+    default:
+        ThrowIllegal(instruction, "unsupported permutation instruction");
+    }
+    recorder.Record(changes);
+    ClearVstart(registers, changes);
+}
 } // namespace
 
 bool IsVectorInstruction(uint32_t instruction)
@@ -528,7 +754,12 @@ bool IsSupportedVectorInstruction(uint32_t instruction)
 
 bool VectorInstructionWritesGpr(uint32_t instruction)
 {
-    return DecodeVsetKind(instruction) != VsetKind::None;
+    if (DecodeVsetKind(instruction) != VsetKind::None)
+    {
+        return true;
+    }
+    const VectorArithInfo *info = DecodeVectorArith(instruction);
+    return info && info->op == VectorArithOp::MoveXS; // vmv.x.s rd, vs2
 }
 
 VectorExecResult ExecuteVectorInstruction(uint32_t instruction, uint64_t rs1Value,
@@ -555,6 +786,11 @@ VectorExecResult ExecuteVectorInstruction(uint32_t instruction, uint64_t rs1Valu
     }
     if (const VectorArithInfo *info = DecodeVectorArith(instruction))
     {
+        if (info->shape == VectorOpShape::Permute)
+        {
+            ExecutePermute(*info, instruction, rs1Value, registers, changes, result);
+            return result;
+        }
         ExecuteIntegerArith(*info, instruction, rs1Value, registers, changes);
         return result;
     }
