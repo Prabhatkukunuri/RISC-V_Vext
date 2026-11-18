@@ -101,6 +101,121 @@ constexpr VectorArithInfo kVectorArith[] = {
     {0b101001, FUNCT3_OPIVV, -1, Op::Sra, Shape::SingleWidth, S, 1, "vsra.vv"},
     {0b101001, FUNCT3_OPIVX, -1, Op::Sra, Shape::SingleWidth, S, 1, "vsra.vx"},
     {0b101001, FUNCT3_OPIVI, -1, Op::Sra, Shape::SingleWidth, S, 1, "vsra.vi"},
+
+    // 11.7 Narrowing right shift: vs2 is 2*SEW wide, the result is cut to SEW. vnsra
+    // sign-extends the wide element first, vnsrl zero-extends it.
+    {0b101100, FUNCT3_OPIVV, -1, Op::Srl, Shape::Narrowing, U, 1, "vnsrl.wv"},
+    {0b101100, FUNCT3_OPIVX, -1, Op::Srl, Shape::Narrowing, U, 1, "vnsrl.wx"},
+    {0b101100, FUNCT3_OPIVI, -1, Op::Srl, Shape::Narrowing, U, 1, "vnsrl.wi"},
+    {0b101101, FUNCT3_OPIVV, -1, Op::Sra, Shape::Narrowing, S, 1, "vnsra.wv"},
+    {0b101101, FUNCT3_OPIVX, -1, Op::Sra, Shape::Narrowing, S, 1, "vnsra.wx"},
+    {0b101101, FUNCT3_OPIVI, -1, Op::Sra, Shape::Narrowing, S, 1, "vnsra.wi"},
+
+    // 11.8 Integer compare: vd is a mask register. The .vi immediate is a sign-extended simm5
+    // even for the unsigned compares (so vmsleu.vi v1, v2, -1 compares with 2^SEW - 1).
+    {0b011000, FUNCT3_OPIVV, -1, Op::Eq, Shape::Compare, U, 1, "vmseq.vv"},
+    {0b011000, FUNCT3_OPIVX, -1, Op::Eq, Shape::Compare, U, 1, "vmseq.vx"},
+    {0b011000, FUNCT3_OPIVI, -1, Op::Eq, Shape::Compare, U, 1, "vmseq.vi"},
+    {0b011001, FUNCT3_OPIVV, -1, Op::Ne, Shape::Compare, U, 1, "vmsne.vv"},
+    {0b011001, FUNCT3_OPIVX, -1, Op::Ne, Shape::Compare, U, 1, "vmsne.vx"},
+    {0b011001, FUNCT3_OPIVI, -1, Op::Ne, Shape::Compare, U, 1, "vmsne.vi"},
+    {0b011010, FUNCT3_OPIVV, -1, Op::Lt, Shape::Compare, U, 1, "vmsltu.vv"},
+    {0b011010, FUNCT3_OPIVX, -1, Op::Lt, Shape::Compare, U, 1, "vmsltu.vx"},
+    {0b011011, FUNCT3_OPIVV, -1, Op::Lt, Shape::Compare, S, 1, "vmslt.vv"},
+    {0b011011, FUNCT3_OPIVX, -1, Op::Lt, Shape::Compare, S, 1, "vmslt.vx"},
+    {0b011100, FUNCT3_OPIVV, -1, Op::Le, Shape::Compare, U, 1, "vmsleu.vv"},
+    {0b011100, FUNCT3_OPIVX, -1, Op::Le, Shape::Compare, U, 1, "vmsleu.vx"},
+    {0b011100, FUNCT3_OPIVI, -1, Op::Le, Shape::Compare, U, 1, "vmsleu.vi"},
+    {0b011101, FUNCT3_OPIVV, -1, Op::Le, Shape::Compare, S, 1, "vmsle.vv"},
+    {0b011101, FUNCT3_OPIVX, -1, Op::Le, Shape::Compare, S, 1, "vmsle.vx"},
+    {0b011101, FUNCT3_OPIVI, -1, Op::Le, Shape::Compare, S, 1, "vmsle.vi"},
+    {0b011110, FUNCT3_OPIVX, -1, Op::Gt, Shape::Compare, U, 1, "vmsgtu.vx"},
+    {0b011110, FUNCT3_OPIVI, -1, Op::Gt, Shape::Compare, U, 1, "vmsgtu.vi"},
+    {0b011111, FUNCT3_OPIVX, -1, Op::Gt, Shape::Compare, S, 1, "vmsgt.vx"},
+    {0b011111, FUNCT3_OPIVI, -1, Op::Gt, Shape::Compare, S, 1, "vmsgt.vi"},
+
+    // 11.9 Integer min/max (no .vi forms in the ISA)
+    {0b000100, FUNCT3_OPIVV, -1, Op::Min, Shape::SingleWidth, U, 1, "vminu.vv"},
+    {0b000100, FUNCT3_OPIVX, -1, Op::Min, Shape::SingleWidth, U, 1, "vminu.vx"},
+    {0b000101, FUNCT3_OPIVV, -1, Op::Min, Shape::SingleWidth, S, 1, "vmin.vv"},
+    {0b000101, FUNCT3_OPIVX, -1, Op::Min, Shape::SingleWidth, S, 1, "vmin.vx"},
+    {0b000110, FUNCT3_OPIVV, -1, Op::Max, Shape::SingleWidth, U, 1, "vmaxu.vv"},
+    {0b000110, FUNCT3_OPIVX, -1, Op::Max, Shape::SingleWidth, U, 1, "vmaxu.vx"},
+    {0b000111, FUNCT3_OPIVV, -1, Op::Max, Shape::SingleWidth, S, 1, "vmax.vv"},
+    {0b000111, FUNCT3_OPIVX, -1, Op::Max, Shape::SingleWidth, S, 1, "vmax.vx"},
+
+    // 11.10 Single-width multiply. vmulhsu: vs2 signed, vs1/rs1 unsigned.
+    {0b100101, FUNCT3_OPMVV, -1, Op::Mul, Shape::SingleWidth, S, 1, "vmul.vv"},
+    {0b100101, FUNCT3_OPMVX, -1, Op::Mul, Shape::SingleWidth, S, 1, "vmul.vx"},
+    {0b100111, FUNCT3_OPMVV, -1, Op::Mulh, Shape::SingleWidth, S, 1, "vmulh.vv"},
+    {0b100111, FUNCT3_OPMVX, -1, Op::Mulh, Shape::SingleWidth, S, 1, "vmulh.vx"},
+    {0b100100, FUNCT3_OPMVV, -1, Op::Mulh, Shape::SingleWidth, U, 1, "vmulhu.vv"},
+    {0b100100, FUNCT3_OPMVX, -1, Op::Mulh, Shape::SingleWidth, U, 1, "vmulhu.vx"},
+    {0b100110, FUNCT3_OPMVV, -1, Op::Mulh, Shape::SingleWidth, S, 1, "vmulhsu.vv", 0},
+    {0b100110, FUNCT3_OPMVX, -1, Op::Mulh, Shape::SingleWidth, S, 1, "vmulhsu.vx", 0},
+
+    // 11.11 Divide and remainder
+    {0b100000, FUNCT3_OPMVV, -1, Op::Div, Shape::SingleWidth, U, 1, "vdivu.vv"},
+    {0b100000, FUNCT3_OPMVX, -1, Op::Div, Shape::SingleWidth, U, 1, "vdivu.vx"},
+    {0b100001, FUNCT3_OPMVV, -1, Op::Div, Shape::SingleWidth, S, 1, "vdiv.vv"},
+    {0b100001, FUNCT3_OPMVX, -1, Op::Div, Shape::SingleWidth, S, 1, "vdiv.vx"},
+    {0b100010, FUNCT3_OPMVV, -1, Op::Rem, Shape::SingleWidth, U, 1, "vremu.vv"},
+    {0b100010, FUNCT3_OPMVX, -1, Op::Rem, Shape::SingleWidth, U, 1, "vremu.vx"},
+    {0b100011, FUNCT3_OPMVV, -1, Op::Rem, Shape::SingleWidth, S, 1, "vrem.vv"},
+    {0b100011, FUNCT3_OPMVX, -1, Op::Rem, Shape::SingleWidth, S, 1, "vrem.vx"},
+
+    // 11.12 Widening multiply (the full 2*SEW product). vwmulsu: vs2 signed, vs1 unsigned.
+    {0b111011, FUNCT3_OPMVV, -1, Op::Mul, Shape::Widening, S, 1, "vwmul.vv"},
+    {0b111011, FUNCT3_OPMVX, -1, Op::Mul, Shape::Widening, S, 1, "vwmul.vx"},
+    {0b111000, FUNCT3_OPMVV, -1, Op::Mul, Shape::Widening, U, 1, "vwmulu.vv"},
+    {0b111000, FUNCT3_OPMVX, -1, Op::Mul, Shape::Widening, U, 1, "vwmulu.vx"},
+    {0b111010, FUNCT3_OPMVV, -1, Op::Mul, Shape::Widening, S, 1, "vwmulsu.vv", 0},
+    {0b111010, FUNCT3_OPMVX, -1, Op::Mul, Shape::Widening, S, 1, "vwmulsu.vx", 0},
+
+    // 11.13 Single-width multiply-add (assembly order: vd, vs1/rs1, vs2)
+    {0b101101, FUNCT3_OPMVV, -1, Op::Macc, Shape::SingleWidth, S, 1, "vmacc.vv"},
+    {0b101101, FUNCT3_OPMVX, -1, Op::Macc, Shape::SingleWidth, S, 1, "vmacc.vx"},
+    {0b101111, FUNCT3_OPMVV, -1, Op::Nmsac, Shape::SingleWidth, S, 1, "vnmsac.vv"},
+    {0b101111, FUNCT3_OPMVX, -1, Op::Nmsac, Shape::SingleWidth, S, 1, "vnmsac.vx"},
+    {0b101001, FUNCT3_OPMVV, -1, Op::Madd, Shape::SingleWidth, S, 1, "vmadd.vv"},
+    {0b101001, FUNCT3_OPMVX, -1, Op::Madd, Shape::SingleWidth, S, 1, "vmadd.vx"},
+    {0b101011, FUNCT3_OPMVV, -1, Op::Nmsub, Shape::SingleWidth, S, 1, "vnmsub.vv"},
+    {0b101011, FUNCT3_OPMVX, -1, Op::Nmsub, Shape::SingleWidth, S, 1, "vnmsub.vx"},
+
+    // 11.14 Widening multiply-add. isSigned is vs2's signedness, sourceSigned vs1/rs1's.
+    {0b111100, FUNCT3_OPMVV, -1, Op::Macc, Shape::Widening, U, 1, "vwmaccu.vv"},
+    {0b111100, FUNCT3_OPMVX, -1, Op::Macc, Shape::Widening, U, 1, "vwmaccu.vx"},
+    {0b111101, FUNCT3_OPMVV, -1, Op::Macc, Shape::Widening, S, 1, "vwmacc.vv"},
+    {0b111101, FUNCT3_OPMVX, -1, Op::Macc, Shape::Widening, S, 1, "vwmacc.vx"},
+    {0b111111, FUNCT3_OPMVV, -1, Op::Macc, Shape::Widening, U, 1, "vwmaccsu.vv", 1},
+    {0b111111, FUNCT3_OPMVX, -1, Op::Macc, Shape::Widening, U, 1, "vwmaccsu.vx", 1},
+    {0b111110, FUNCT3_OPMVX, -1, Op::Macc, Shape::Widening, S, 1, "vwmaccus.vx", 0},
+
+    // 11.15 / 11.16 Merge (vm = 0) and move (vm = 1, vs2 = v0) share funct6 010111.
+    {0b010111, FUNCT3_OPIVV, -1, Op::Merge, Shape::SingleWidth, S, 1, "vmerge.vvm", -1, 0},
+    {0b010111, FUNCT3_OPIVX, -1, Op::Merge, Shape::SingleWidth, S, 1, "vmerge.vxm", -1, 0},
+    {0b010111, FUNCT3_OPIVI, -1, Op::Merge, Shape::SingleWidth, S, 1, "vmerge.vim", -1, 0},
+    {0b010111, FUNCT3_OPIVV, -1, Op::Move, Shape::SingleWidth, S, 1, "vmv.v.v", -1, 1},
+    {0b010111, FUNCT3_OPIVX, -1, Op::Move, Shape::SingleWidth, S, 1, "vmv.v.x", -1, 1},
+    {0b010111, FUNCT3_OPIVI, -1, Op::Move, Shape::SingleWidth, S, 1, "vmv.v.i", -1, 1},
+
+    // 11.4 Add-with-carry / subtract-with-borrow. Operands are unsigned SEW values (the .vim
+    // simm5 is sign-extended, then truncated to SEW). vadc/vsbc with vm = 1 are reserved.
+    {0b010000, FUNCT3_OPIVV, -1, Op::Adc, Shape::SingleWidth, U, 1, "vadc.vvm", -1, 0},
+    {0b010000, FUNCT3_OPIVX, -1, Op::Adc, Shape::SingleWidth, U, 1, "vadc.vxm", -1, 0},
+    {0b010000, FUNCT3_OPIVI, -1, Op::Adc, Shape::SingleWidth, U, 1, "vadc.vim", -1, 0},
+    {0b010001, FUNCT3_OPIVV, -1, Op::Madc, Shape::Compare, U, 1, "vmadc.vvm", -1, 0},
+    {0b010001, FUNCT3_OPIVX, -1, Op::Madc, Shape::Compare, U, 1, "vmadc.vxm", -1, 0},
+    {0b010001, FUNCT3_OPIVI, -1, Op::Madc, Shape::Compare, U, 1, "vmadc.vim", -1, 0},
+    {0b010001, FUNCT3_OPIVV, -1, Op::Madc, Shape::Compare, U, 1, "vmadc.vv", -1, 1},
+    {0b010001, FUNCT3_OPIVX, -1, Op::Madc, Shape::Compare, U, 1, "vmadc.vx", -1, 1},
+    {0b010001, FUNCT3_OPIVI, -1, Op::Madc, Shape::Compare, U, 1, "vmadc.vi", -1, 1},
+    {0b010010, FUNCT3_OPIVV, -1, Op::Sbc, Shape::SingleWidth, U, 1, "vsbc.vvm", -1, 0},
+    {0b010010, FUNCT3_OPIVX, -1, Op::Sbc, Shape::SingleWidth, U, 1, "vsbc.vxm", -1, 0},
+    {0b010011, FUNCT3_OPIVV, -1, Op::Msbc, Shape::Compare, U, 1, "vmsbc.vvm", -1, 0},
+    {0b010011, FUNCT3_OPIVX, -1, Op::Msbc, Shape::Compare, U, 1, "vmsbc.vxm", -1, 0},
+    {0b010011, FUNCT3_OPIVV, -1, Op::Msbc, Shape::Compare, U, 1, "vmsbc.vv", -1, 1},
+    {0b010011, FUNCT3_OPIVX, -1, Op::Msbc, Shape::Compare, U, 1, "vmsbc.vx", -1, 1},
 };
 } // namespace
 
@@ -119,10 +234,12 @@ const VectorArithInfo *DecodeVectorArith(uint32_t instruction)
     const uint32_t funct3 = (instruction >> 12) & 0x7;
     const uint32_t funct6 = (instruction >> 26) & 0x3F;
     const int vs1 = static_cast<int>((instruction >> 15) & 0x1F);
+    const int vm = static_cast<int>((instruction >> 25) & 1);
     for (const VectorArithInfo &info : kVectorArith)
     {
         if (info.funct6 == funct6 && info.funct3 == funct3 &&
-            (info.vs1Field < 0 || info.vs1Field == vs1))
+            (info.vs1Field < 0 || info.vs1Field == vs1) &&
+            (info.vmField < 0 || info.vmField == vm))
         {
             return &info;
         }

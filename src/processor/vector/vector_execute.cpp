@@ -149,11 +149,12 @@ void ClearVstart(RegisterFile &registers, std::vector<RegisterChange> &changes)
     }
 }
 
-/// One element's result. @p eew is the destination element width, which bounds shift amounts.
-uint64_t ApplyArith(VectorArithOp op, uint64_t vs2Element, uint64_t source, uint64_t eew)
+/// One element's result. @p width is the width the operation works at (2*SEW for a narrowing
+/// shift, else the destination width); it bounds the shift amount.
+uint64_t ApplyArith(VectorArithOp op, uint64_t vs2Element, uint64_t source, uint64_t width)
 {
-    // Shifts use only the low log2(SEW) bits of the shift amount (0..SEW-1).
-    const unsigned shift = static_cast<unsigned>(source & (eew - 1));
+    // Shifts use only the low log2(width) bits of the shift amount (0..width-1).
+    const unsigned shift = static_cast<unsigned>(source & (width - 1));
     switch (op)
     {
     case VectorArithOp::Add:
@@ -177,8 +178,88 @@ uint64_t ApplyArith(VectorArithOp op, uint64_t vs2Element, uint64_t source, uint
         return static_cast<uint64_t>(static_cast<int64_t>(vs2Element) >> shift);
     case VectorArithOp::Extend:
         return vs2Element;
+    case VectorArithOp::Eq:
+    case VectorArithOp::Ne:
+    case VectorArithOp::Lt:
+    case VectorArithOp::Le:
+    case VectorArithOp::Gt:
+    case VectorArithOp::Mul:
+        return vs2Element * source; // low 64 bits: exact for any width <= 64
+    default:
+        break; // the others need more context: see ElementResult()
     }
     return 0;
+}
+
+/// High @p sew bits of the 2*SEW-bit product of a and b (each extended to 64 bits already).
+uint64_t MultiplyHigh(uint64_t a, bool aSigned, uint64_t b, bool bSigned, uint64_t sew)
+{
+    using u128 = unsigned __int128;
+    // Two's-complement 128-bit operands: the low 128 bits of the product are exact in every
+    // signedness combination, since the true product always fits in 128 bits.
+    const auto widen = [](uint64_t x, bool isSigned)
+    {
+        return isSigned ? static_cast<u128>(static_cast<__int128>(static_cast<int64_t>(x)))
+                        : static_cast<u128>(x);
+    };
+    return static_cast<uint64_t>((widen(a, aSigned) * widen(b, bSigned)) >> sew);
+}
+
+/// Carry out of a + b + carryIn (Madc), or borrow out of a - b - carryIn (Msbc): whether the
+/// exact result, before truncation to @p sew bits, overflows or is negative. a and b are
+/// zero-extended SEW values.
+bool CarryOut(VectorArithOp op, uint64_t a, uint64_t b, uint64_t carryIn, uint64_t sew)
+{
+    using u128 = unsigned __int128;
+    if (op == VectorArithOp::Msbc)
+    {
+        return static_cast<u128>(a) < static_cast<u128>(b) + carryIn;
+    }
+    return ((static_cast<u128>(a) + b + carryIn) >> sew) != 0;
+}
+
+/// Division and remainder with the scalar M-extension results for the edge cases:
+/// x / 0 = all ones, x % 0 = x, and for signed MIN / -1 = MIN, MIN % -1 = 0.
+uint64_t DivRem(bool isRem, uint64_t a, uint64_t b, bool isSigned)
+{
+    if (b == 0)
+    {
+        return isRem ? a : ~0ULL;
+    }
+    if (!isSigned)
+    {
+        return isRem ? a % b : a / b;
+    }
+    const auto sa = static_cast<int64_t>(a);
+    const auto sb = static_cast<int64_t>(b);
+    if (sb == -1)
+    {
+        // -MIN wraps back to MIN, at any SEW once the result is truncated; avoids the C++ UB.
+        return isRem ? 0 : 0 - a;
+    }
+    return static_cast<uint64_t>(isRem ? sa % sb : sa / sb);
+}
+
+/// A compare's mask bit. Both operands were already sign- or zero-extended to 64 bits.
+bool Compare(VectorArithOp op, uint64_t a, uint64_t b, bool isSigned)
+{
+    const auto less = [&](uint64_t x, uint64_t y)
+    { return isSigned ? static_cast<int64_t>(x) < static_cast<int64_t>(y) : x < y; };
+    switch (op)
+    {
+    case VectorArithOp::Eq:
+        return a == b;
+    case VectorArithOp::Ne:
+        return a != b;
+    case VectorArithOp::Lt:
+        return less(a, b);
+    case VectorArithOp::Le:
+        return !less(b, a);
+    case VectorArithOp::Gt:
+        return less(b, a);
+    default:
+        return false;
+    }
 }
 
 /// Element width (bits) and register group size (log2 EMUL) of one operand.
@@ -195,6 +276,8 @@ struct OperandLayout
  *   Widening     vd 2SEW  = vs2 SEW   op src SEW   (narrow operands extended first)
  *   WideningW    vd 2SEW  = vs2 2SEW  op src SEW
  *   Extension    vd SEW   = extend(vs2 SEW/factor)
+ *   Narrowing    vd SEW   = vs2 2SEW  op src SEW   (result truncated to SEW)
+ *   Compare      vd mask  = vs2 SEW   op src SEW   (one bit per element, a single register)
  */
 void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint64_t rs1Value,
                          RegisterFile &registers, std::vector<RegisterChange> &changes)
@@ -206,6 +289,8 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
     const bool sourceIsVector = info.vs1Field < 0 && (info.funct3 == FUNCT3_OPIVV ||
                                                       info.funct3 == FUNCT3_OPMVV);
     const bool hasSource = info.shape != VectorOpShape::Extension;
+    const bool isCompare = info.shape == VectorOpShape::Compare;
+    const bool sourceSigned = SourceIsSigned(info);
 
     const Vtype vtype = RequireValidVtype(instruction, registers);
     const uint64_t sew = vtype.sew;
@@ -235,16 +320,23 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
         src2 = {sew / info.factor, lmul - factorLog2};
         break;
     }
+    case VectorOpShape::Narrowing:
+        src2 = {2 * sew, lmul + 1};
+        break;
+    case VectorOpShape::Compare:
+        dest = {1, 0}; // a mask: one register, whatever LMUL is
+        break;
     }
+    const uint64_t opWidth = std::max(dest.eew, src2.eew);
 
     // Widths and group sizes this implementation can't hold (Spike's checks).
-    if (dest.eew > ELEN)
+    if (opWidth > ELEN)
     {
-        ThrowIllegal(instruction, "2*SEW = " + std::to_string(dest.eew) + " exceeds ELEN = 64");
+        ThrowIllegal(instruction, "2*SEW = " + std::to_string(opWidth) + " exceeds ELEN = 64");
     }
-    if (dest.emulLog2 > 3)
+    if (dest.emulLog2 > 3 || src2.emulLog2 > 3)
     {
-        ThrowIllegal(instruction, "destination EMUL would exceed 8");
+        ThrowIllegal(instruction, "a wide operand's EMUL would exceed 8");
     }
     if (src2.eew < 8 || src2.emulLog2 < -3)
     {
@@ -252,9 +344,14 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
                                       " is below 8 bits or EMUL below 1/8");
     }
 
-    if (masked && vd == 0)
+    // A compare may write its mask into v0 (bit i of v0 is read before it is replaced).
+    if (masked && vd == 0 && !isCompare)
     {
         ThrowIllegal(instruction, "a masked instruction cannot write v0");
+    }
+    if (info.op == VectorArithOp::Move && vs2 != 0)
+    {
+        ThrowIllegal(instruction, "vmv.v.* is reserved unless its vs2 field is v0");
     }
     RequireAligned(instruction, vd, dest.emulLog2, "vd");
     RequireAligned(instruction, vs2, src2.emulLog2, "vs2");
@@ -268,11 +365,33 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
     {
         ThrowIllegal(instruction, "vd cannot be the same register as vs2");
     }
-    if (dest.eew != src2.eew)
+    if (isCompare)
+    {
+        // The mask may be vs2 / vs1 itself (their lowest register) but not elsewhere in a group.
+        if (vd != vs2 && IsOverlapped(vd, 1, vs2, GroupRegs(src2.emulLog2)))
+        {
+            ThrowIllegal(instruction, "the mask vd overlaps the vs2 group other than at its start");
+        }
+        if (sourceIsVector && vd != field19_15 &&
+            IsOverlapped(vd, 1, field19_15, GroupRegs(src1.emulLog2)))
+        {
+            ThrowIllegal(instruction, "the mask vd overlaps the vs1 group other than at its start");
+        }
+    }
+    else if (info.shape == VectorOpShape::Narrowing)
+    {
+        // vd may only overlap the lowest-numbered part of the wide vs2 group (Spike: vd == vs2).
+        if (vd != vs2 &&
+            IsOverlapped(vd, GroupRegs(dest.emulLog2), vs2, GroupRegs(src2.emulLog2)))
+        {
+            ThrowIllegal(instruction, "vd overlaps the wide vs2 group other than at its start");
+        }
+    }
+    else if (dest.eew != src2.eew)
     {
         RequireWideningOverlapOk(instruction, vd, dest.emulLog2, vs2, src2.emulLog2, "vs2");
     }
-    if (sourceIsVector && dest.eew != src1.eew)
+    if (!isCompare && sourceIsVector && dest.eew != src1.eew)
     {
         RequireWideningOverlapOk(instruction, vd, dest.emulLog2, field19_15, src1.emulLog2,
                                  "vs1");
@@ -300,7 +419,9 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
     DestinationRecorder recorder(registers, vd, GroupRegs(dest.emulLog2));
     for (uint64_t i = vstart; i < vl; ++i)
     {
-        if (masked && !registers.ReadMaskBit(0, i))
+        // vmerge and vadc & co. (fixed vm = 0) read v0 as data and write every body element.
+        const bool maskBit = masked ? registers.ReadMaskBit(0, i) : true;
+        if (masked && !maskBit && info.vmField != 0)
         {
             continue; // masked-off: undisturbed
         }
@@ -312,10 +433,80 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
         {
             const uint64_t raw =
                 sourceIsVector ? registers.ReadVectorElement(field19_15, i, src1.eew) : scalar;
-            b = Extend(raw, src1.eew, info.isSigned);
+            b = Extend(raw, src1.eew, sourceSigned);
         }
-        registers.WriteVectorElement(vd, i, dest.eew,
-                                     ApplyArith(info.op, a, b, dest.eew) & SewMask(dest.eew));
+        // Carry / borrow in: v0's bit when the instruction reads v0 (vadc, vmadc.vvm, ...).
+        const uint64_t carryIn = masked && maskBit ? 1 : 0;
+        if (info.op == VectorArithOp::Madc || info.op == VectorArithOp::Msbc)
+        {
+            registers.WriteMaskBit(vd, i, CarryOut(info.op, a, b, carryIn, sew));
+            continue;
+        }
+        if (isCompare)
+        {
+            registers.WriteMaskBit(vd, i, Compare(info.op, a, b, info.isSigned));
+            continue;
+        }
+
+        uint64_t result = 0;
+        switch (info.op)
+        {
+        case VectorArithOp::Min:
+        case VectorArithOp::Max:
+        {
+            // a and b were sign- or zero-extended per isSigned, so one 64-bit compare decides.
+            const bool aIsLess = Compare(VectorArithOp::Lt, a, b, info.isSigned);
+            result = (info.op == VectorArithOp::Min) == aIsLess ? a : b;
+            break;
+        }
+        case VectorArithOp::Mulh:
+            result = MultiplyHigh(a, info.isSigned, b, sourceSigned, sew);
+            break;
+        case VectorArithOp::Div:
+        case VectorArithOp::Rem:
+            result = DivRem(info.op == VectorArithOp::Rem, a, b, info.isSigned);
+            break;
+        case VectorArithOp::Macc:
+        case VectorArithOp::Nmsac:
+        case VectorArithOp::Madd:
+        case VectorArithOp::Nmsub:
+        {
+            // Destructive: vd is also an operand (the addend or a multiplicand).
+            const uint64_t old = registers.ReadVectorElement(vd, i, dest.eew);
+            switch (info.op)
+            {
+            case VectorArithOp::Macc:
+                result = old + b * a;
+                break;
+            case VectorArithOp::Nmsac:
+                result = old - b * a;
+                break;
+            case VectorArithOp::Madd:
+                result = b * old + a;
+                break;
+            default: // Nmsub
+                result = a - b * old;
+                break;
+            }
+            break;
+        }
+        case VectorArithOp::Merge:
+            result = maskBit ? b : a;
+            break;
+        case VectorArithOp::Move:
+            result = b;
+            break;
+        case VectorArithOp::Adc:
+            result = a + b + carryIn;
+            break;
+        case VectorArithOp::Sbc:
+            result = a - b - carryIn;
+            break;
+        default:
+            result = ApplyArith(info.op, a, b, opWidth);
+            break;
+        }
+        registers.WriteVectorElement(vd, i, dest.eew, result & SewMask(dest.eew));
     }
     recorder.Record(changes);
     ClearVstart(registers, changes);

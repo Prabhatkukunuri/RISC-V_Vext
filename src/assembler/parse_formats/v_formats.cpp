@@ -199,6 +199,47 @@ bool Parser::parse_O_GPR_C_I_C_VTYPE()
     instruction_index_++;
     return true;
 }
+namespace
+{
+/**
+ * A compare the ISA doesn't encode, which the assembler rewrites into one it does (RVV 1.0,
+ * 11.8; the same mapping llvm-mc uses).
+ */
+struct VectorCompareAlias
+{
+    const char *name;
+    const char *target;
+    bool swapSources;       ///< .vv: vd, va, vb  ->  target vd, vb, va
+    bool decrementImm;      ///< .vi: imm         ->  target imm - 1 (so imm is -15..16)
+    const char *zeroTarget; ///< .vi with imm 0: target.vv vd, va, va instead (or nullptr)
+};
+
+const VectorCompareAlias kVectorCompareAliases[] = {
+    {"vmsgt.vv", "vmslt.vv", true, false, nullptr},
+    {"vmsgtu.vv", "vmsltu.vv", true, false, nullptr},
+    {"vmsge.vv", "vmsle.vv", true, false, nullptr},
+    {"vmsgeu.vv", "vmsleu.vv", true, false, nullptr},
+    {"vmslt.vi", "vmsle.vi", false, true, nullptr},
+    // va <u 0 is always false and va >=u 0 always true; imm - 1 would wrap, so compare va
+    // with itself instead.
+    {"vmsltu.vi", "vmsleu.vi", false, true, "vmsne.vv"},
+    {"vmsge.vi", "vmsgt.vi", false, true, nullptr},
+    {"vmsgeu.vi", "vmsgtu.vi", false, true, "vmseq.vv"},
+};
+
+const VectorCompareAlias *FindVectorCompareAlias(const std::string &name)
+{
+    for (const VectorCompareAlias &alias : kVectorCompareAliases)
+    {
+        if (name == alias.name)
+        {
+            return &alias;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
 bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
 {
     const unsigned int line = currentToken().line_number;
@@ -207,38 +248,98 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
     auto endsAt = [&](int n)
     { return peekToken(n).type == TokenType::EOF_ || peekToken(n).line_number != line; };
 
-    // vd , vs2 [, <source>] [, v0.t]
-    if (!(on(1, TokenType::VEC_REGISTER) && on(2, TokenType::COMMA) &&
-          on(3, TokenType::VEC_REGISTER)))
+    const VectorCompareAlias *alias = FindVectorCompareAlias(currentToken().value);
+    std::string opcode = alias ? alias->target : currentToken().value;
+    const rvv::VectorArithInfo *opInfo = rvv::FindVectorArith(opcode);
+    const rvv::VectorArithOp op = opInfo ? opInfo->op : rvv::VectorArithOp::Add;
+
+    // The operand layout depends on the instruction:
+    //   most                vd, vs2[, source][, v0.t]
+    //   vmacc, vwmacc, ...  vd, source, vs2[, v0.t]
+    //   vmerge, vadc, ...   vd, vs2, source, v0       (fixed vm = 0: v0 is data, required)
+    //   vmadc.vv, ...       vd, vs2, source           (fixed vm = 1: never masked)
+    //   vmv.v.*             vd, source                (never masked; vs2 is encoded as v0)
+    enum class MaskOperand
     {
-        return false;
+        Optional,
+        Required,
+        None
+    };
+    std::vector<TokenType> operands{TokenType::VEC_REGISTER};
+    int vs2At = -1;    // operand index of vs2, -1 if it is implicitly v0
+    int sourceAt = -1; // operand index of the source, -1 if there is none
+    MaskOperand maskOperand = MaskOperand::Optional;
+    if (op == rvv::VectorArithOp::Move)
+    {
+        operands.push_back(sourceType.value_or(TokenType::VEC_REGISTER));
+        sourceAt = 1;
+        maskOperand = MaskOperand::None;
     }
-    int end = 4; // first token after the operands
-    if (sourceType)
+    else if (opInfo && rvv::HasSourceFirstSyntax(*opInfo) && sourceType)
     {
-        if (!(on(4, TokenType::COMMA) && on(5, *sourceType)))
+        operands.push_back(*sourceType);
+        operands.push_back(TokenType::VEC_REGISTER);
+        sourceAt = 1;
+        vs2At = 2;
+    }
+    else
+    {
+        operands.push_back(TokenType::VEC_REGISTER);
+        vs2At = 1;
+        if (sourceType)
+        {
+            operands.push_back(*sourceType);
+            sourceAt = 2;
+        }
+        if (opInfo && opInfo->vmField == 0)
+        {
+            maskOperand = MaskOperand::Required;
+        }
+        else if (opInfo && opInfo->vmField == 1)
+        {
+            maskOperand = MaskOperand::None;
+        }
+    }
+
+    // Operand k is token 2k + 1, with a comma before each one after the first.
+    for (size_t k = 0; k < operands.size(); ++k)
+    {
+        const int at = static_cast<int>(2 * k + 1);
+        if ((k > 0 && !on(at - 1, TokenType::COMMA)) || !on(at, operands[k]) ||
+            peekToken(at).value == "v0.t") // "v0.t" is only valid as the mask operand
         {
             return false;
         }
-        end = 6;
     }
+    const int end = static_cast<int>(2 * operands.size()); // first token after the operands
+    const auto maskIs = [&](const char *name)
+    {
+        return on(end, TokenType::COMMA) && on(end + 1, TokenType::VEC_REGISTER) &&
+               peekToken(end + 1).value == name && endsAt(end + 2);
+    };
     bool masked = false;
-    if (on(end, TokenType::COMMA) && on(end + 1, TokenType::VEC_REGISTER) &&
-        peekToken(end + 1).value == "v0.t" && endsAt(end + 2))
+    switch (maskOperand)
     {
-        masked = true;
-    }
-    else if (!endsAt(end))
-    {
-        return false;
-    }
-    // "v0.t" is only valid as the mask operand.
-    for (int n = 1; n < end; n += 2)
-    {
-        if (peekToken(n).value == "v0.t")
+    case MaskOperand::Optional:
+        masked = maskIs("v0.t");
+        if (!masked && !endsAt(end))
         {
             return false;
         }
+        break;
+    case MaskOperand::Required:
+        if (!maskIs("v0"))
+        {
+            return false;
+        }
+        masked = true; // vm = 0
+        break;
+    case MaskOperand::None:
+        if (!endsAt(end))
+        {
+            return false;
+        }
+        break;
     }
 
     auto reject = [&](const Token &at, const std::string &title, const std::string &detail)
@@ -252,24 +353,31 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
     };
 
     const Token &vd = peekToken(1);
-    const Token &vs2 = peekToken(3);
-    if (masked && vd.value == "v0")
+    const std::string vs2 = vs2At < 0 ? "v0" : peekToken(2 * vs2At + 1).value;
+    const Token &source = peekToken(sourceAt < 0 ? 0 : 2 * sourceAt + 1);
+    // The source operand's token type (vmv.v.v reaches here with no sourceType).
+    const std::optional<TokenType> sourceKind =
+        sourceAt < 0 ? std::nullopt : std::optional<TokenType>(operands[sourceAt]);
+    // Compares write a mask, which may go to v0 even under v0.t.
+    const bool isCompare = opInfo && opInfo->shape == rvv::VectorOpShape::Compare;
+    if (masked && vd.value == "v0" && !isCompare)
     {
         return reject(vd, "Destination overlaps the mask register",
-                      "A masked instruction (v0.t) cannot write v0");
+                      opInfo && opInfo->vmField == 0
+                          ? "This instruction reads v0 as an operand, so it cannot write v0"
+                          : "A masked instruction (v0.t) cannot write v0");
     }
 
     // Overlaps that are illegal at every LMUL: the destination can't start on a source with a
     // narrower element width. (Overlaps that depend on LMUL are checked when it runs.)
-    if (const rvv::VectorArithInfo *info = rvv::FindVectorArith(currentToken().value))
+    if (opInfo)
     {
-        const bool narrowVs2 = info->shape == rvv::VectorOpShape::Widening ||
-                               info->shape == rvv::VectorOpShape::Extension;
-        const bool narrowVs1 = (info->shape == rvv::VectorOpShape::Widening ||
-                                info->shape == rvv::VectorOpShape::WideningW) &&
-                               sourceType == TokenType::VEC_REGISTER;
-        if ((narrowVs2 && vd.value == vs2.value) ||
-            (narrowVs1 && vd.value == peekToken(5).value))
+        const bool narrowVs2 = opInfo->shape == rvv::VectorOpShape::Widening ||
+                               opInfo->shape == rvv::VectorOpShape::Extension;
+        const bool narrowVs1 = (opInfo->shape == rvv::VectorOpShape::Widening ||
+                                opInfo->shape == rvv::VectorOpShape::WideningW) &&
+                               sourceKind == TokenType::VEC_REGISTER;
+        if ((narrowVs2 && vd.value == vs2) || (narrowVs1 && vd.value == source.value))
         {
             return reject(vd, "Destination overlaps a source",
                           "vd cannot be the same register as a source with a narrower element "
@@ -278,43 +386,58 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
     }
 
     ICUnit block;
-    block.setOpcode(currentToken().value);
     block.setLineNumber(line);
     block.setInstructionIndex(instruction_index_);
     block.setRd(vd.value);
-    block.setRs2(vs2.value);
+    block.setRs2(vs2);
     block.setVm(masked ? 0 : 1);
 
-    if (sourceType == TokenType::NUM)
+    if (sourceKind == TokenType::NUM)
     {
-        // Shifts take an unsigned uimm (0..31); everything else a signed simm5 (-16..15).
-        const rvv::VectorArithInfo *info = rvv::FindVectorArith(currentToken().value);
-        const bool isUnsigned = info && rvv::HasUnsignedImmediate(*info);
-        const int64_t low = isUnsigned ? 0 : -16;
-        const int64_t high = isUnsigned ? 31 : 15;
-        const Token &source = peekToken(5);
+        // Shifts take an unsigned uimm (0..31), the decrementing compare aliases -15..16 and
+        // everything else a signed simm5 (-16..15).
+        const bool isUnsigned = opInfo && rvv::HasUnsignedImmediate(*opInfo);
+        const bool decrement = alias && alias->decrementImm;
+        const int64_t low = isUnsigned ? 0 : decrement ? -15 : -16;
+        const int64_t high = isUnsigned ? 31 : decrement ? 16 : 15;
         const int64_t imm = std::stoll(source.value);
         if (imm < low || imm > high)
         {
             recordError(ParseError(source.line_number, "Immediate value out of range"));
             errors_.all_errors.emplace_back(errors::ImmediateOutOfRangeError(
                 "Immediate value out of range",
-                isUnsigned ? "Expected: 0 <= uimm <= 31" : "Expected: -16 <= simm5 <= 15",
+                isUnsigned ? "Expected: 0 <= uimm <= 31"
+                : decrement ? "Expected: -15 <= imm <= 16"
+                            : "Expected: -16 <= simm5 <= 15",
                 filename_, source.line_number, source.column_number,
                 GetLineFromFile(filename_, source.line_number)));
             skipCurrentLine();
             return true;
         }
-        block.setImm(std::to_string(imm));
+        if (decrement && imm == 0 && alias->zeroTarget)
+        {
+            opcode = alias->zeroTarget; // compare va with itself
+            block.setRs1(vs2);
+        }
+        else
+        {
+            block.setImm(std::to_string(decrement ? imm - 1 : imm));
+        }
     }
-    else if (sourceType == TokenType::GP_REGISTER)
+    else if (sourceKind == TokenType::GP_REGISTER)
     {
-        block.setRs1(reg_alias_to_name.at(peekToken(5).value));
+        block.setRs1(reg_alias_to_name.at(source.value));
     }
-    else if (sourceType == TokenType::VEC_REGISTER)
+    else if (sourceKind == TokenType::VEC_REGISTER)
     {
-        block.setRs1(peekToken(5).value);
+        block.setRs1(source.value);
+        if (alias && alias->swapSources)
+        {
+            block.setRs1(vs2);
+            block.setRs2(source.value);
+        }
     }
+    block.setOpcode(opcode);
 
     skipCurrentLine();
     intermediate_code_.emplace_back(block, true);
@@ -341,5 +464,37 @@ bool Parser::parse_O_VR_C_VR_C_I()
 bool Parser::parse_O_VR_C_VR()
 {
     return parseVectorArith(std::nullopt);
+}
+
+// The operand order of these comes from the instruction (see parseVectorArith).
+
+bool Parser::parse_O_VR_C_GPR_C_VR()
+{
+    return parseVectorArith(TokenType::GP_REGISTER);
+}
+
+bool Parser::parse_O_VR_C_VR_C_VR_C_V0()
+{
+    return parseVectorArith(TokenType::VEC_REGISTER);
+}
+
+bool Parser::parse_O_VR_C_VR_C_GPR_C_V0()
+{
+    return parseVectorArith(TokenType::GP_REGISTER);
+}
+
+bool Parser::parse_O_VR_C_VR_C_I_C_V0()
+{
+    return parseVectorArith(TokenType::NUM);
+}
+
+bool Parser::parse_O_VR_C_GPR()
+{
+    return parseVectorArith(TokenType::GP_REGISTER);
+}
+
+bool Parser::parse_O_VR_C_I()
+{
+    return parseVectorArith(TokenType::NUM);
 }
 } // namespace Kites

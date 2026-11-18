@@ -59,9 +59,30 @@ enum class VectorArithOp
     Or,     ///< vd[i] = vs2[i] | src
     Xor,    ///< vd[i] = vs2[i] ^ src
     Sll,    ///< vd[i] = vs2[i] << (src % SEW)
-    Srl,    ///< vd[i] = vs2[i] >> (src % SEW), zero-filling
-    Sra,    ///< vd[i] = vs2[i] >> (src % SEW), sign-filling
+    Srl,    ///< vd[i] = vs2[i] >> (src % width of vs2), zero-filling
+    Sra,    ///< vd[i] = vs2[i] >> (src % width of vs2), sign-filling
     Extend, ///< vd[i] = extend(vs2[i]) (vzext/vsext, no second source)
+    Eq,     ///< mask bit i = vs2[i] == src
+    Ne,     ///< mask bit i = vs2[i] != src
+    Lt,     ///< mask bit i = vs2[i] <  src (signed or unsigned per isSigned)
+    Le,     ///< mask bit i = vs2[i] <= src
+    Gt,     ///< mask bit i = vs2[i] >  src
+    Min,    ///< vd[i] = min(vs2[i], src) (signed or unsigned per isSigned)
+    Max,    ///< vd[i] = max(vs2[i], src)
+    Mul,    ///< vd[i] = low half of vs2[i] * src (the whole product when widening)
+    Mulh,   ///< vd[i] = high SEW bits of the 2*SEW-bit product vs2[i] * src
+    Div,    ///< vd[i] = vs2[i] / src (RISC-V results for /0 and overflow)
+    Rem,    ///< vd[i] = vs2[i] % src
+    Macc,   ///< vd[i] = +(src * vs2[i]) + vd[i]
+    Nmsac,  ///< vd[i] = -(src * vs2[i]) + vd[i]
+    Madd,   ///< vd[i] = (src * vd[i]) + vs2[i]
+    Nmsub,  ///< vd[i] = -(src * vd[i]) + vs2[i]
+    Merge,  ///< vd[i] = v0.mask[i] ? src : vs2[i] (every body element)
+    Move,   ///< vd[i] = src (vmv.v.v / .v.x / .v.i)
+    Adc,    ///< vd[i] = vs2[i] + src + v0.mask[i] (every body element)
+    Sbc,    ///< vd[i] = vs2[i] - src - v0.mask[i] (every body element)
+    Madc,   ///< mask bit i = carry out of vs2[i] + src [+ v0.mask[i] when vm = 0]
+    Msbc,   ///< mask bit i = borrow out of vs2[i] - src [- v0.mask[i] when vm = 0]
 };
 
 /**
@@ -73,6 +94,8 @@ enum class VectorOpShape
     Widening,    ///< vd is 2*SEW, vs2 and the source are SEW (vwadd.vv, .vx, ...)
     WideningW,   ///< vd and vs2 are 2*SEW, the source is SEW (vwadd.wv, .wx, ...)
     Extension,   ///< vd is SEW, vs2 is SEW/factor (vzext.vf2, vsext.vf8, ...)
+    Narrowing,   ///< vd and the source are SEW, vs2 is 2*SEW (vnsrl.wv, vnsra.wi, ...)
+    Compare,     ///< vs2 and the source are SEW; vd is a mask (one bit per element, one register)
 };
 
 /**
@@ -88,7 +111,27 @@ struct VectorArithInfo
     bool isSigned; ///< Narrow operands are sign-extended (vwadd, vsext), else zero-extended.
     unsigned factor; ///< Extension: vs2 is SEW/factor wide. 1 otherwise.
     const char *mnemonic;
+    /// Signedness of the source (vs1 / rs1) when it differs from vs2's (vmulhsu, vwmaccsu...):
+    /// 0 unsigned, 1 signed, -1 the same as isSigned.
+    int sourceSigned = -1;
+    /// Fixed vm bit that picks the instruction, or -1 if vm is an ordinary mask. With 0 the
+    /// instruction reads v0 as data (vmerge's selector, vadc's carry-in) and writes every body
+    /// element; the assembly then ends in a required ", v0". With 1 it takes no mask at all.
+    int vmField = -1;
 };
+
+/// Whether the vs1 / rs1 / immediate operand is sign-extended.
+inline bool SourceIsSigned(const VectorArithInfo &info)
+{
+    return info.sourceSigned < 0 ? info.isSigned : info.sourceSigned == 1;
+}
+
+/// The multiply-add family writes "vd, vs1/rs1, vs2": the source comes before vs2.
+inline bool HasSourceFirstSyntax(const VectorArithInfo &info)
+{
+    return info.op == VectorArithOp::Macc || info.op == VectorArithOp::Nmsac ||
+           info.op == VectorArithOp::Madd || info.op == VectorArithOp::Nmsub;
+}
 
 /**
  * @brief True if the .vi form takes an unsigned 5-bit immediate (uimm, 0..31) rather than a
