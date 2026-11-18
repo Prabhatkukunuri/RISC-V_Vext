@@ -26,11 +26,20 @@ VectorTab::VectorTab(QWidget *parent, RegisterFile *regfile) : KitesTab(parent)
     auto *csrRow = new QHBoxLayout();
     csrRow->setSpacing(6);
     m_vlenChip = makeChip("VLEN: bits per vector register (vlenb = VLEN/8 bytes)");
-    m_vtypeChip = makeChip("vtype: SEW, LMUL and the tail/mask policies set by vsetvli");
+    m_villChip = makeChip("vtype.vill: set when vtype is invalid (at reset, or after a vset* with an "
+                          "unsupported vtype); vector instructions trap until a valid vsetvli");
+    m_sewChip = makeChip("SEW: selected element width, from vtype.vsew");
+    m_lmulChip = makeChip("LMUL: registers grouped per operand, from vtype.vlmul "
+                          "(mf2/mf4/mf8 = fractional)");
+    m_tailChip = makeChip("Tail policy (vtype.vta): ta = agnostic, tu = undisturbed, for elements "
+                          "past vl");
+    m_maskChip = makeChip("Mask policy (vtype.vma): ma = agnostic, mu = undisturbed, for "
+                          "masked-off elements");
     m_vlChip = makeChip("vl: number of elements the next vector instruction processes");
     m_vlmaxChip = makeChip("VLMAX = LMUL * VLEN / SEW: the largest vl this vtype allows");
     m_vstartChip = makeChip("vstart: first element to process (non-zero after a trap)");
-    for (QLabel *chip : {m_vlenChip, m_vtypeChip, m_vlChip, m_vlmaxChip, m_vstartChip})
+    for (QLabel *chip : {m_vlenChip, m_villChip, m_sewChip, m_lmulChip, m_tailChip, m_maskChip,
+                         m_vlChip, m_vlmaxChip, m_vstartChip})
     {
         csrRow->addWidget(chip);
     }
@@ -59,14 +68,6 @@ VectorTab::VectorTab(QWidget *parent, RegisterFile *regfile) : KitesTab(parent)
     controls->addWidget(m_formatBox);
 
     controls->addStretch();
-    auto *legend = new QLabel(
-        // Same colour as the model's highlight: Qt reads "#b13232fd" as #AARRGGBB.
-        "<span style='background:#6c6cf6; color:white'>&nbsp;changed&nbsp;</span> by the latest "
-        "vector write &nbsp;·&nbsp; dimmed = tail (element &ge; vl) &nbsp;·&nbsp; banded = LMUL "
-        "group",
-        this);
-    legend->setTextFormat(Qt::RichText);
-    controls->addWidget(legend);
     layout->addLayout(controls);
 
     // --- Register grid ------------------------------------------------------------------------
@@ -144,13 +145,24 @@ void VectorTab::updateCsrStrip()
     rvv::Vtype vtype;
     if (rvv::DecodeVtype(vtypeRaw, vtype))
     {
-        setChip(m_vtypeChip, "vtype", QString::fromStdString(rvv::FormatVtype(vtypeRaw)));
+        const QString lmul = vtype.lmulLog2 >= 0
+                                 ? QString("m%1").arg(1 << vtype.lmulLog2)
+                                 : QString("mf%1").arg(1 << -vtype.lmulLog2);
+        setChip(m_villChip, "vill", "0 (valid)");
+        setChip(m_sewChip, "SEW", QString("e%1").arg(vtype.sew));
+        setChip(m_lmulChip, "LMUL", lmul);
+        setChip(m_tailChip, "Tail", vtype.tailAgnostic ? "ta (agnostic)" : "tu (undisturbed)");
+        setChip(m_maskChip, "Mask", vtype.maskAgnostic ? "ma (agnostic)" : "mu (undisturbed)");
         setChip(m_vlmaxChip, "VLMAX", QString::number(rvv::Vlmax(vtype, vlenBits)));
     }
     else
     {
-        setChip(m_vtypeChip, "vtype",
-                "<span style='color:#d9534f'>vill</span> — run vsetvli before vector instructions");
+        setChip(m_villChip, "vill", "<span style='color:#d9534f'>1</span>");
+        // With vill set the other vtype fields mean nothing.
+        setChip(m_sewChip, "SEW", "—");
+        setChip(m_lmulChip, "LMUL", "—");
+        setChip(m_tailChip, "Tail", "—");
+        setChip(m_maskChip, "Mask", "—");
         setChip(m_vlmaxChip, "VLMAX", "—");
     }
 }

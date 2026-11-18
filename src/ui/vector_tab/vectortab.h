@@ -13,10 +13,10 @@ class VectorRegisterModel;
 /**
  * @brief The Vector tab: the RVV state of the VM.
  *
- * A strip of the vector CSRs (VLEN, vtype decoded, vl, VLMAX, vstart) above a v0-v31 grid with
- * one column per element. The element width follows SEW or can be fixed to e8..e64; tail
- * elements are dimmed, elements changed by the latest vector write are highlighted, and LMUL
- * register groups are banded.
+ * A strip of the vector CSRs (VLEN, vtype split into vill / SEW / LMUL / tail and mask policy,
+ * vl, VLMAX, vstart) above a v0-v31 grid with one column per element. The element width follows
+ * SEW or can be fixed to e8..e64; tail elements are dimmed, elements changed by the latest
+ * vector write are highlighted, and LMUL register groups are banded.
  */
 class VectorTab : public KitesTab
 {
@@ -38,7 +38,11 @@ class VectorTab : public KitesTab
     QComboBox *m_formatBox = nullptr;
 
     QLabel *m_vlenChip = nullptr;
-    QLabel *m_vtypeChip = nullptr;
+    QLabel *m_villChip = nullptr;
+    QLabel *m_sewChip = nullptr;
+    QLabel *m_lmulChip = nullptr;
+    QLabel *m_tailChip = nullptr;
+    QLabel *m_maskChip = nullptr;
     QLabel *m_vlChip = nullptr;
     QLabel *m_vlmaxChip = nullptr;
     QLabel *m_vstartChip = nullptr;
