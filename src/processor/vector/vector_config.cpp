@@ -249,6 +249,24 @@ constexpr VectorArithInfo kVectorArith[] = {
     {0b000111, FUNCT3_OPMVV, -1, Op::Max, Shape::Reduction, S, 1, "vredmax.vs"},
     {0b110000, FUNCT3_OPIVV, -1, Op::Add, Shape::WideningReduction, U, 1, "vwredsumu.vs"},
     {0b110001, FUNCT3_OPIVV, -1, Op::Add, Shape::WideningReduction, S, 1, "vwredsum.vs"},
+
+    // 15 Mask instructions. The .mm logical ops exist only unmasked (vm = 1). vcpop/vfirst
+    // (VWXUNARY0) and vmsbf/vmsof/vmsif/viota/vid (VMUNARY0) pick the op with the vs1 field.
+    {0b011000, FUNCT3_OPMVV, -1, Op::MaskAndn, Shape::Mask, U, 1, "vmandn.mm", -1, 1},
+    {0b011001, FUNCT3_OPMVV, -1, Op::MaskAnd, Shape::Mask, U, 1, "vmand.mm", -1, 1},
+    {0b011010, FUNCT3_OPMVV, -1, Op::MaskOr, Shape::Mask, U, 1, "vmor.mm", -1, 1},
+    {0b011011, FUNCT3_OPMVV, -1, Op::MaskXor, Shape::Mask, U, 1, "vmxor.mm", -1, 1},
+    {0b011100, FUNCT3_OPMVV, -1, Op::MaskOrn, Shape::Mask, U, 1, "vmorn.mm", -1, 1},
+    {0b011101, FUNCT3_OPMVV, -1, Op::MaskNand, Shape::Mask, U, 1, "vmnand.mm", -1, 1},
+    {0b011110, FUNCT3_OPMVV, -1, Op::MaskNor, Shape::Mask, U, 1, "vmnor.mm", -1, 1},
+    {0b011111, FUNCT3_OPMVV, -1, Op::MaskXnor, Shape::Mask, U, 1, "vmxnor.mm", -1, 1},
+    {0b010000, FUNCT3_OPMVV, 0b10000, Op::Cpop, Shape::Mask, U, 1, "vcpop.m"},
+    {0b010000, FUNCT3_OPMVV, 0b10001, Op::First, Shape::Mask, U, 1, "vfirst.m"},
+    {0b010100, FUNCT3_OPMVV, 0b00001, Op::Sbf, Shape::Mask, U, 1, "vmsbf.m"},
+    {0b010100, FUNCT3_OPMVV, 0b00010, Op::Sof, Shape::Mask, U, 1, "vmsof.m"},
+    {0b010100, FUNCT3_OPMVV, 0b00011, Op::Sif, Shape::Mask, U, 1, "vmsif.m"},
+    {0b010100, FUNCT3_OPMVV, 0b10000, Op::Iota, Shape::Mask, U, 1, "viota.m"},
+    {0b010100, FUNCT3_OPMVV, 0b10001, Op::Id, Shape::Mask, U, 1, "vid.v"},
 };
 } // namespace
 

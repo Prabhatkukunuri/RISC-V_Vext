@@ -95,6 +95,23 @@ enum class VectorArithOp
     GatherEi16, ///< vrgather with 16-bit indices in vs1 (EMUL = 16/SEW * LMUL)
     Compress,   ///< pack the vs2 elements whose bit in mask vs1 is set to the start of vd
     WholeMove,  ///< copy NREG = vs1 field + 1 whole registers (vmv<nr>r.v)
+
+    // Section 15, mask instructions (shape Mask). Mask bits are one per element.
+    MaskAndn, ///< vd.mask[i] = vs2.mask[i] & !vs1.mask[i]   (vmandn.mm)
+    MaskAnd,  ///< vd.mask[i] = vs2.mask[i] &  vs1.mask[i]   (vmand.mm)
+    MaskOr,   ///< vd.mask[i] = vs2.mask[i] |  vs1.mask[i]   (vmor.mm)
+    MaskXor,  ///< vd.mask[i] = vs2.mask[i] ^  vs1.mask[i]   (vmxor.mm)
+    MaskOrn,  ///< vd.mask[i] = vs2.mask[i] | !vs1.mask[i]   (vmorn.mm)
+    MaskNand, ///< vd.mask[i] = !(vs2.mask[i] & vs1.mask[i]) (vmnand.mm)
+    MaskNor,  ///< vd.mask[i] = !(vs2.mask[i] | vs1.mask[i]) (vmnor.mm)
+    MaskXnor, ///< vd.mask[i] = !(vs2.mask[i] ^ vs1.mask[i]) (vmxnor.mm)
+    Cpop,     ///< x[rd] = number of active set bits of vs2 below vl  (vcpop.m)
+    First,    ///< x[rd] = index of the first active set bit of vs2, or -1  (vfirst.m)
+    Sbf,      ///< vd.mask = set-before-first active set bit of vs2  (vmsbf.m)
+    Sif,      ///< vd.mask = set-including-first  (vmsif.m)
+    Sof,      ///< vd.mask = set-only-first  (vmsof.m)
+    Iota,     ///< vd[i] = number of active set bits of vs2 below i  (viota.m)
+    Id,       ///< vd[i] = i  (vid.v)
 };
 
 /**
@@ -111,6 +128,7 @@ enum class VectorOpShape
     Permute,     ///< section 16: slides, gathers, compress and moves (see VectorArithOp)
     Reduction,   ///< vd[0] = vs1[0] op vs2[*]; vd and vs1 are single registers, all SEW
     WideningReduction, ///< as Reduction, but vd[0] and vs1[0] are 2*SEW (vwredsum{u})
+    Mask,        ///< section 15: mask logical ops, vcpop/vfirst, vms{b,i,o}f, viota, vid
 };
 
 /**

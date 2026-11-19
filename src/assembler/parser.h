@@ -163,6 +163,7 @@ class Parser
     bool parse_O_VR_C_GPR();
     bool parse_O_VR_C_I();
     bool parse_O_GPR_C_VR();
+    bool parse_O_VR();
     /**
      * @brief Shared parser for "op vd, vs2[, <source>][, v0.t]". @p sourceType is the token type
      * of the third operand: VEC_REGISTER (vs1), GP_REGISTER (rs1) or NUM (simm5), or nullopt for

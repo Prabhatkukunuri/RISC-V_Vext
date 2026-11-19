@@ -332,6 +332,8 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
     case VectorOpShape::Reduction:
     case VectorOpShape::WideningReduction:
         break; // handled by ExecuteReduction()
+    case VectorOpShape::Mask:
+        break; // handled by ExecuteMask()
     }
     const uint64_t opWidth = std::max(dest.eew, src2.eew);
 
@@ -589,6 +591,189 @@ void ExecuteReduction(const VectorArithInfo &info, uint32_t instruction, Registe
     recorder.Record(changes);
 }
 
+/**
+ * Mask instructions (RVV 1.0, section 15). Mask registers hold one bit per element, read and
+ * written with ReadMaskBit / WriteMaskBit. As elsewhere, tail and masked-off bits or elements
+ * are left undisturbed.
+ *
+ *   vm*.mm           vd.mask[i] = f(vs2.mask[i], vs1.mask[i]) for i in [vstart, vl); never masked
+ *   vcpop.m/vfirst.m x[rd] = count / first index of the active set bits of vs2 (vstart must be 0)
+ *   vmsbf/vmsif/vmsof.m  set-before / including / only the first active set bit (vstart must be 0)
+ *   viota.m          vd[i] = number of active set bits of vs2 below i (vstart must be 0)
+ *   vid.v            vd[i] = i
+ */
+void ExecuteMask(const VectorArithInfo &info, uint32_t instruction, RegisterFile &registers,
+                 std::vector<RegisterChange> &changes, VectorExecResult &result)
+{
+    const uint32_t vd = (instruction >> 7) & 0x1F;   // or rd for vcpop/vfirst
+    const uint32_t vs1 = (instruction >> 15) & 0x1F; // a mask register only for the .mm ops
+    const uint32_t vs2 = (instruction >> 20) & 0x1F;
+    const bool masked = ((instruction >> 25) & 1) == 0;
+
+    const Vtype vtype = RequireValidVtype(instruction, registers);
+    const uint64_t vl = registers.ReadCsr(RegisterFile::CSR_VL);
+    const uint64_t vstart = registers.ReadCsr(RegisterFile::CSR_VSTART);
+    const auto active = [&](uint64_t i) { return !masked || registers.ReadMaskBit(0, i); };
+    const auto requireVstartZero = [&]
+    {
+        if (vstart != 0)
+        {
+            ThrowIllegal(instruction, "vstart must be 0 for " + std::string(info.mnemonic));
+        }
+    };
+    const auto requireNotV0WhenMasked = [&]
+    {
+        if (masked && vd == 0)
+        {
+            ThrowIllegal(instruction, "a masked instruction cannot write v0");
+        }
+    };
+
+    switch (info.op)
+    {
+    case VectorArithOp::MaskAndn:
+    case VectorArithOp::MaskAnd:
+    case VectorArithOp::MaskOr:
+    case VectorArithOp::MaskXor:
+    case VectorArithOp::MaskOrn:
+    case VectorArithOp::MaskNand:
+    case VectorArithOp::MaskNor:
+    case VectorArithOp::MaskXnor:
+    {
+        DestinationRecorder recorder(registers, vd, 1);
+        for (uint64_t i = vstart; i < vl; ++i)
+        {
+            // Both sources are read before vd's bit i is replaced, so vd may be vs1 or vs2.
+            const bool a = registers.ReadMaskBit(vs2, i);
+            const bool b = registers.ReadMaskBit(vs1, i);
+            bool bit = false;
+            switch (info.op)
+            {
+            case VectorArithOp::MaskAndn: bit = a && !b; break;
+            case VectorArithOp::MaskAnd:  bit = a && b; break;
+            case VectorArithOp::MaskOr:   bit = a || b; break;
+            case VectorArithOp::MaskXor:  bit = a != b; break;
+            case VectorArithOp::MaskOrn:  bit = a || !b; break;
+            case VectorArithOp::MaskNand: bit = !(a && b); break;
+            case VectorArithOp::MaskNor:  bit = !(a || b); break;
+            default:                      bit = a == b; break; // MaskXnor
+            }
+            registers.WriteMaskBit(vd, i, bit);
+        }
+        recorder.Record(changes);
+        ClearVstart(registers, changes);
+        return;
+    }
+
+    case VectorArithOp::Cpop:
+    case VectorArithOp::First:
+    {
+        requireVstartZero();
+        uint64_t count = 0;
+        uint64_t first = ~0ULL; // -1: no active set bit
+        for (uint64_t i = 0; i < vl; ++i)
+        {
+            if (active(i) && registers.ReadMaskBit(vs2, i))
+            {
+                if (count == 0)
+                {
+                    first = i;
+                }
+                ++count;
+            }
+        }
+        result.writesRd = true;
+        result.rdValue = info.op == VectorArithOp::Cpop ? count : first;
+        return;
+    }
+
+    case VectorArithOp::Sbf:
+    case VectorArithOp::Sif:
+    case VectorArithOp::Sof:
+    {
+        requireVstartZero();
+        requireNotV0WhenMasked();
+        if (vd == vs2)
+        {
+            ThrowIllegal(instruction, "vd cannot overlap vs2");
+        }
+        DestinationRecorder recorder(registers, vd, 1);
+        bool seenOne = false; // Spike's has_one: an active set bit has been passed
+        for (uint64_t i = 0; i < vl; ++i)
+        {
+            if (!active(i))
+            {
+                continue; // masked-off: undisturbed
+            }
+            const bool bitIn = registers.ReadMaskBit(vs2, i);
+            bool bitOut = false;
+            switch (info.op)
+            {
+            case VectorArithOp::Sbf: bitOut = !seenOne && !bitIn; break;
+            case VectorArithOp::Sif: bitOut = !seenOne; break;
+            default:                 bitOut = !seenOne && bitIn; break; // Sof
+            }
+            seenOne = seenOne || bitIn;
+            registers.WriteMaskBit(vd, i, bitOut);
+        }
+        recorder.Record(changes);
+        return;
+    }
+
+    case VectorArithOp::Iota:
+    {
+        requireVstartZero();
+        requireNotV0WhenMasked();
+        RequireAligned(instruction, vd, vtype.lmulLog2, "vd");
+        if (IsOverlapped(vd, GroupRegs(vtype.lmulLog2), vs2, 1))
+        {
+            ThrowIllegal(instruction, "the vd group cannot overlap the source mask vs2");
+        }
+        DestinationRecorder recorder(registers, vd, GroupRegs(vtype.lmulLog2));
+        uint64_t count = 0;
+        for (uint64_t i = 0; i < vl; ++i)
+        {
+            if (!active(i))
+            {
+                continue; // masked-off: undisturbed, and its vs2 bit is not counted
+            }
+            registers.WriteVectorElement(vd, i, vtype.sew, count & SewMask(vtype.sew));
+            if (registers.ReadMaskBit(vs2, i))
+            {
+                ++count;
+            }
+        }
+        recorder.Record(changes);
+        return;
+    }
+
+    case VectorArithOp::Id:
+    {
+        if (vs2 != 0)
+        {
+            ThrowIllegal(instruction, "vid.v is reserved unless its vs2 field is v0");
+        }
+        requireNotV0WhenMasked();
+        RequireAligned(instruction, vd, vtype.lmulLog2, "vd");
+        DestinationRecorder recorder(registers, vd, GroupRegs(vtype.lmulLog2));
+        for (uint64_t i = vstart; i < vl; ++i)
+        {
+            if (active(i))
+            {
+                registers.WriteVectorElement(vd, i, vtype.sew, i & SewMask(vtype.sew));
+            }
+        }
+        recorder.Record(changes);
+        ClearVstart(registers, changes);
+        return;
+    }
+
+    default:
+        break;
+    }
+    ThrowIllegal(instruction, "unsupported mask instruction");
+}
+
 void ExecutePermute(const VectorArithInfo &info, uint32_t instruction, uint64_t rs1Value,
                     RegisterFile &registers, std::vector<RegisterChange> &changes,
                     VectorExecResult &result)
@@ -829,7 +1014,9 @@ bool VectorInstructionWritesGpr(uint32_t instruction)
         return true;
     }
     const VectorArithInfo *info = DecodeVectorArith(instruction);
-    return info && info->op == VectorArithOp::MoveXS; // vmv.x.s rd, vs2
+    // vmv.x.s rd, vs2; vcpop.m rd, vs2; vfirst.m rd, vs2
+    return info && (info->op == VectorArithOp::MoveXS || info->op == VectorArithOp::Cpop ||
+                    info->op == VectorArithOp::First);
 }
 
 VectorExecResult ExecuteVectorInstruction(uint32_t instruction, uint64_t rs1Value,
@@ -860,6 +1047,11 @@ VectorExecResult ExecuteVectorInstruction(uint32_t instruction, uint64_t rs1Valu
             info->shape == VectorOpShape::WideningReduction)
         {
             ExecuteReduction(*info, instruction, registers, changes);
+            return result;
+        }
+        if (info->shape == VectorOpShape::Mask)
+        {
+            ExecuteMask(*info, instruction, registers, changes, result);
             return result;
         }
         if (info->shape == VectorOpShape::Permute)

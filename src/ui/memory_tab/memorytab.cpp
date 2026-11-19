@@ -92,12 +92,6 @@ MemoryTab::MemoryTab(QWidget *parent, MemoryController *memoryController)
     navigation->addWidget(lastWriteButton);
 
     navigation->addStretch();
-    auto *legend = new QLabel("<span style='background:#6c6cf6; color:white'>&nbsp;highlighted"
-                              "&nbsp;</span> = bytes written by the latest store (scalar or "
-                              "vector)",
-                              this);
-    legend->setTextFormat(Qt::RichText);
-    navigation->addWidget(legend);
     ui->gridLayout->addLayout(navigation, 1, 0, 1, 5);
 
     connect(orderBox, &QComboBox::currentIndexChanged, this,

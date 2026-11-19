@@ -238,6 +238,38 @@ const VectorCompareAlias *FindVectorCompareAlias(const std::string &name)
     }
     return nullptr;
 }
+
+/**
+ * The section-15 mask pseudoinstructions, rewritten into a mask logical instruction with both
+ * sources the same register (the same mapping llvm-mc uses):
+ *   vmmv.m vd, vs -> vmand.mm vd, vs, vs     vmnot.m vd, vs -> vmnand.mm vd, vs, vs
+ *   vmclr.m vd    -> vmxor.mm vd, vd, vd     vmset.m vd     -> vmxnor.mm vd, vd, vd
+ */
+struct VectorMaskPseudo
+{
+    const char *name;
+    const char *target;
+    bool hasSource; ///< vd, vs (vmmv/vmnot); otherwise vd alone and vd is also the source
+};
+
+const VectorMaskPseudo kVectorMaskPseudos[] = {
+    {"vmmv.m", "vmand.mm", true},
+    {"vmnot.m", "vmnand.mm", true},
+    {"vmclr.m", "vmxor.mm", false},
+    {"vmset.m", "vmxnor.mm", false},
+};
+
+const VectorMaskPseudo *FindVectorMaskPseudo(const std::string &name)
+{
+    for (const VectorMaskPseudo &pseudo : kVectorMaskPseudos)
+    {
+        if (name == pseudo.name)
+        {
+            return &pseudo;
+        }
+    }
+    return nullptr;
+}
 } // namespace
 //Parses all the vector arithemetic instructions and checks for errors which do not depend on runtime variables
 bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
@@ -249,7 +281,10 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
     { return peekToken(n).type == TokenType::EOF_ || peekToken(n).line_number != line; };
 
     const VectorCompareAlias *alias = FindVectorCompareAlias(currentToken().value);
-    std::string opcode = alias ? alias->target : currentToken().value;
+    const VectorMaskPseudo *maskPseudo = FindVectorMaskPseudo(currentToken().value);
+    std::string opcode = alias        ? alias->target
+                         : maskPseudo ? maskPseudo->target
+                                      : currentToken().value;
     const rvv::VectorArithInfo *opInfo = rvv::FindVectorArith(opcode);
     const rvv::VectorArithOp op = opInfo ? opInfo->op : rvv::VectorArithOp::Add;
 
@@ -260,23 +295,40 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
     //   vmadc.vv, ...       vd, vs2, source           (fixed vm = 1: never masked)
     //   vmv.v.*, vmv.s.x    vd, source                (never masked; vs2 is encoded as v0)
     //   vmv.x.s             rd, vs2                   (a GPR destination; never masked)
+    //   vcpop.m, vfirst.m   rd, vs2[, v0.t]           (a GPR destination)
+    //   vid.v               vd[, v0.t]                (vs2 is encoded as v0)
+    //   vmmv.m / vmclr.m    vd[, vs]                  (mask pseudos; never masked)
     enum class MaskOperand
     {
         Optional,
         Required,
         None
     };
-    const bool gprDestination = op == rvv::VectorArithOp::MoveXS;
+    const bool gprDestination = op == rvv::VectorArithOp::MoveXS ||
+                                op == rvv::VectorArithOp::Cpop || op == rvv::VectorArithOp::First;
     std::vector<TokenType> operands{gprDestination ? TokenType::GP_REGISTER
                                                    : TokenType::VEC_REGISTER};
     int vs2At = -1;    // operand index of vs2, -1 if it is implicitly v0
     int sourceAt = -1; // operand index of the source, -1 if there is none
     MaskOperand maskOperand = MaskOperand::Optional;
-    if (gprDestination)
+    if (maskPseudo)
+    {
+        if (maskPseudo->hasSource)
+        {
+            operands.push_back(TokenType::VEC_REGISTER);
+            vs2At = 1;
+        }
+        maskOperand = MaskOperand::None;
+    }
+    else if (gprDestination)
     {
         operands.push_back(TokenType::VEC_REGISTER);
         vs2At = 1;
-        maskOperand = MaskOperand::None;
+        maskOperand = opInfo->vmField == 1 ? MaskOperand::None : MaskOperand::Optional;
+    }
+    else if (op == rvv::VectorArithOp::Id)
+    {
+        // vid.v vd[, v0.t]: no source operands at all.
     }
     else if (op == rvv::VectorArithOp::Move || op == rvv::VectorArithOp::MoveSX)
     {
@@ -395,8 +447,12 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
                           "vd cannot be the same register as a source with a narrower element "
                           "width");
         }
-        // Section 16: slide-ups, vrgather and vcompress may not overlap their sources at all.
-        const bool noVs2Overlap = op == rvv::VectorArithOp::SlideUp ||
+        // Section 16: slide-ups, vrgather and vcompress may not overlap their sources at all;
+        // section 15: nor may vmsbf/vmsif/vmsof and viota overlap their source mask.
+        const bool noVs2Overlap = op == rvv::VectorArithOp::Sbf || op == rvv::VectorArithOp::Sif ||
+                                  op == rvv::VectorArithOp::Sof ||
+                                  op == rvv::VectorArithOp::Iota ||
+                                  op == rvv::VectorArithOp::SlideUp ||
                                   op == rvv::VectorArithOp::Slide1Up ||
                                   op == rvv::VectorArithOp::Gather ||
                                   op == rvv::VectorArithOp::GatherEi16 ||
@@ -408,7 +464,8 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
         if ((noVs2Overlap && vd.value == vs2) || (noVs1Overlap && vd.value == source.value))
         {
             return reject(vd, "Destination overlaps a source",
-                          "For slide-ups, vrgather and vcompress, vd must not overlap a source");
+                          "For vmsbf/vmsif/vmsof, viota, slide-ups, vrgather and vcompress, vd "
+                          "must not overlap a source");
         }
     }
 
@@ -418,6 +475,13 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
     block.setRd(gprDestination ? reg_alias_to_name.at(vd.value) : vd.value);
     block.setRs2(vs2);
     block.setVm(masked ? 0 : 1);
+    if (maskPseudo)
+    {
+        // Both sources are the given register, or vd itself for vmclr.m / vmset.m.
+        const std::string &sourceReg = vs2At < 0 ? vd.value : vs2;
+        block.setRs2(sourceReg);
+        block.setRs1(sourceReg);
+    }
 
     if (sourceKind == TokenType::NUM)
     {
@@ -523,6 +587,11 @@ bool Parser::parse_O_VR_C_GPR()
 bool Parser::parse_O_VR_C_I()
 {
     return parseVectorArith(TokenType::NUM);
+}
+
+bool Parser::parse_O_VR()
+{
+    return parseVectorArith(std::nullopt); // vid.v vd; vmclr.m / vmset.m vd
 }
 
 bool Parser::parse_O_GPR_C_VR()

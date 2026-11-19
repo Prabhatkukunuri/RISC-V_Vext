@@ -358,6 +358,22 @@ std::unordered_map<Instruction, InstructionEncoding> instruction_encoding_map = 
     {Instruction::kvredmax_vs, {0b1010111, -1, 0b010, -1, 0b000111, -1}},
     {Instruction::kvwredsumu_vs, {0b1010111, -1, 0b000, -1, 0b110000, -1}},
     {Instruction::kvwredsum_vs, {0b1010111, -1, 0b000, -1, 0b110001, -1}},
+    // RVV mask instructions (section 15); funct5 = the fixed vs1 selector where there is one
+    {Instruction::kvmandn_mm, {0b1010111, -1, 0b010, -1, 0b011000, -1}},
+    {Instruction::kvmand_mm, {0b1010111, -1, 0b010, -1, 0b011001, -1}},
+    {Instruction::kvmor_mm, {0b1010111, -1, 0b010, -1, 0b011010, -1}},
+    {Instruction::kvmxor_mm, {0b1010111, -1, 0b010, -1, 0b011011, -1}},
+    {Instruction::kvmorn_mm, {0b1010111, -1, 0b010, -1, 0b011100, -1}},
+    {Instruction::kvmnand_mm, {0b1010111, -1, 0b010, -1, 0b011101, -1}},
+    {Instruction::kvmnor_mm, {0b1010111, -1, 0b010, -1, 0b011110, -1}},
+    {Instruction::kvmxnor_mm, {0b1010111, -1, 0b010, -1, 0b011111, -1}},
+    {Instruction::kvcpop_m, {0b1010111, -1, 0b010, 0b10000, 0b010000, -1}},
+    {Instruction::kvfirst_m, {0b1010111, -1, 0b010, 0b10001, 0b010000, -1}},
+    {Instruction::kvmsbf_m, {0b1010111, -1, 0b010, 0b00001, 0b010100, -1}},
+    {Instruction::kvmsof_m, {0b1010111, -1, 0b010, 0b00010, 0b010100, -1}},
+    {Instruction::kvmsif_m, {0b1010111, -1, 0b010, 0b00011, 0b010100, -1}},
+    {Instruction::kviota_m, {0b1010111, -1, 0b010, 0b10000, 0b010100, -1}},
+    {Instruction::kvid_v, {0b1010111, -1, 0b010, 0b10001, 0b010100, -1}},
 
     {Instruction::kfmadd_s, {0b1000011, 0b00, -1, -1, -1, -1}},
     {Instruction::kfmsub_s, {0b1000111, 0b00, -1, -1, -1, -1}},
@@ -689,6 +705,21 @@ std::unordered_map<std::string, Instruction> instruction_string_map = {
     {"vredmax.vs", Instruction::kvredmax_vs},
     {"vwredsumu.vs", Instruction::kvwredsumu_vs},
     {"vwredsum.vs", Instruction::kvwredsum_vs},
+    {"vmandn.mm", Instruction::kvmandn_mm},
+    {"vmand.mm", Instruction::kvmand_mm},
+    {"vmor.mm", Instruction::kvmor_mm},
+    {"vmxor.mm", Instruction::kvmxor_mm},
+    {"vmorn.mm", Instruction::kvmorn_mm},
+    {"vmnand.mm", Instruction::kvmnand_mm},
+    {"vmnor.mm", Instruction::kvmnor_mm},
+    {"vmxnor.mm", Instruction::kvmxnor_mm},
+    {"vcpop.m", Instruction::kvcpop_m},
+    {"vfirst.m", Instruction::kvfirst_m},
+    {"vmsbf.m", Instruction::kvmsbf_m},
+    {"vmsof.m", Instruction::kvmsof_m},
+    {"vmsif.m", Instruction::kvmsif_m},
+    {"viota.m", Instruction::kviota_m},
+    {"vid.v", Instruction::kvid_v},
 
     {"fmadd.s", Instruction::kfmadd_s},
     {"fmsub.s", Instruction::kfmsub_s},
@@ -761,6 +792,9 @@ static const std::unordered_set<std::string> valid_instructions = {
     // Permutation
     "vmv.x.s", "vmv.s.x", "vslideup.vx", "vslideup.vi", "vslidedown.vx", "vslidedown.vi", "vslide1up.vx", "vslide1down.vx", "vrgather.vv", "vrgather.vx", "vrgather.vi", "vrgatherei16.vv", "vcompress.vm", "vmv1r.v", "vmv2r.v", "vmv4r.v", "vmv8r.v",
     "vredsum.vs", "vredand.vs", "vredor.vs", "vredxor.vs", "vredminu.vs", "vredmin.vs", "vredmaxu.vs", "vredmax.vs", "vwredsumu.vs", "vwredsum.vs",
+    "vmandn.mm", "vmand.mm", "vmor.mm", "vmxor.mm", "vmorn.mm", "vmnand.mm", "vmnor.mm",
+    "vmxnor.mm", "vcpop.m", "vfirst.m", "vmsbf.m", "vmsof.m", "vmsif.m", "viota.m", "vid.v",
+    "vmmv.m", "vmnot.m", "vmclr.m", "vmset.m",
     // Compare aliases (the parser rewrites them; see v_formats.cpp)
     "vmsgt.vv", "vmsgtu.vv", "vmsge.vv", "vmsgeu.vv", "vmslt.vi", "vmsltu.vi", "vmsge.vi",
     "vmsgeu.vi"
@@ -875,7 +909,9 @@ static const std::unordered_set<std::string> VectorArithInstructions = {
     "vadc.vvm", "vadc.vxm", "vadc.vim", "vmadc.vvm", "vmadc.vxm", "vmadc.vim", "vmadc.vv",
     "vmadc.vx", "vmadc.vi", "vsbc.vvm", "vsbc.vxm", "vmsbc.vvm", "vmsbc.vxm", "vmsbc.vv", "vmsbc.vx",
     "vmv.x.s", "vmv.s.x", "vslideup.vx", "vslideup.vi", "vslidedown.vx", "vslidedown.vi", "vslide1up.vx", "vslide1down.vx", "vrgather.vv", "vrgather.vx", "vrgather.vi", "vrgatherei16.vv", "vcompress.vm", "vmv1r.v", "vmv2r.v", "vmv4r.v", "vmv8r.v",
-    "vredsum.vs", "vredand.vs", "vredor.vs", "vredxor.vs", "vredminu.vs", "vredmin.vs", "vredmaxu.vs", "vredmax.vs", "vwredsumu.vs", "vwredsum.vs"};
+    "vredsum.vs", "vredand.vs", "vredor.vs", "vredxor.vs", "vredminu.vs", "vredmin.vs", "vredmaxu.vs", "vredmax.vs", "vwredsumu.vs", "vwredsum.vs",
+    "vmandn.mm", "vmand.mm", "vmor.mm", "vmxor.mm", "vmorn.mm", "vmnand.mm", "vmnor.mm",
+    "vmxnor.mm", "vcpop.m", "vfirst.m", "vmsbf.m", "vmsof.m", "vmsif.m", "viota.m", "vid.v"};
 
 static const std::unordered_set<std::string> MExtensionInstructions = {
     "mul",  "mulh", "mulhsu", "mulhu", "div",  "divu", "rem",
@@ -1556,6 +1592,26 @@ std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map 
     {"vredmax.vs", {SyntaxType::O_VR_C_VR_C_VR}},
     {"vwredsumu.vs", {SyntaxType::O_VR_C_VR_C_VR}},
     {"vwredsum.vs", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vmandn.mm", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vmand.mm", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vmor.mm", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vmxor.mm", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vmorn.mm", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vmnand.mm", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vmnor.mm", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vmxnor.mm", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vcpop.m", {SyntaxType::O_GPR_C_VR}},
+    {"vfirst.m", {SyntaxType::O_GPR_C_VR}},
+    {"vmsbf.m", {SyntaxType::O_VR_C_VR}},
+    {"vmsof.m", {SyntaxType::O_VR_C_VR}},
+    {"vmsif.m", {SyntaxType::O_VR_C_VR}},
+    {"viota.m", {SyntaxType::O_VR_C_VR}},
+    {"vid.v", {SyntaxType::O_VR}},
+    // Mask pseudoinstructions (the parser rewrites them; see v_formats.cpp)
+    {"vmmv.m", {SyntaxType::O_VR_C_VR}},
+    {"vmnot.m", {SyntaxType::O_VR_C_VR}},
+    {"vmclr.m", {SyntaxType::O_VR}},
+    {"vmset.m", {SyntaxType::O_VR}},
     // Compare aliases, rewritten by the parser into the instructions above.
     {"vmsgt.vv", {SyntaxType::O_VR_C_VR_C_VR}},
     {"vmsgtu.vv", {SyntaxType::O_VR_C_VR_C_VR}},
@@ -1854,6 +1910,7 @@ std::string getExpectedSyntaxes(const std::string &opcode)
         {SyntaxType::O_VR_C_GPR, "<v-reg>, <gp-reg>"},
         {SyntaxType::O_VR_C_I, "<v-reg>, <simm5>"},
         {SyntaxType::O_GPR_C_VR, "<gp-reg>, <v-reg>"},
+        {SyntaxType::O_VR, "<v-reg>[, v0.t]"},
         {SyntaxType::O_VR_C_LP_GPR_RP, "<v-reg>, (<gp-reg>)[, v0.t]"},
         {SyntaxType::O_VR_C_LP_GPR_RP_C_GPR, "<v-reg>, (<gp-reg>), <gp-reg>[, v0.t]"},
         {SyntaxType::O_VR_C_LP_GPR_RP_C_VR, "<v-reg>, (<gp-reg>), <v-reg>[, v0.t]"},
@@ -2507,9 +2564,15 @@ std::string disassemble(uint32_t instruction)
             }
         }
         const bool masked = ((instruction >> 25) & 1) == 0;
-        if (info->op == rvv::VectorArithOp::MoveXS) // vmv.x.s rd, vs2
+        if (info->op == rvv::VectorArithOp::MoveXS || info->op == rvv::VectorArithOp::Cpop ||
+            info->op == rvv::VectorArithOp::First) // vmv.x.s / vcpop.m / vfirst.m rd, vs2
         {
-            return std::string(info->mnemonic) + " " + xr(rd) + ", " + vr(rs2);
+            return std::string(info->mnemonic) + " " + xr(rd) + ", " + vr(rs2) +
+                   (masked ? ", v0.t" : "");
+        }
+        if (info->op == rvv::VectorArithOp::Id) // vid.v vd[, v0.t]
+        {
+            return std::string(info->mnemonic) + " " + vr(rd) + (masked ? ", v0.t" : "");
         }
         const std::string name = std::string(info->mnemonic) + " " + vr(rd);
         switch (info->op)

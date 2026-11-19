@@ -6,7 +6,7 @@
  * Each VM reads its scalar source registers its own way (straight from the register file, or
  * through forwarding), then calls ExecuteVectorInstruction(), which updates the vector registers,
  * vector CSRs and (for vector stores) memory, and records each change for undo. Writing rd
- * (vset* only) is left to the VM's writeback.
+ * (vset*, vmv.x.s, vcpop.m, vfirst.m) is left to the VM's writeback.
  */
 
 #ifndef VECTOR_EXECUTE_H
@@ -39,7 +39,7 @@ bool IsVectorInstruction(uint32_t instruction);
 bool IsSupportedVectorInstruction(uint32_t instruction);
 
 /**
- * @brief True if the instruction writes a GPR (rd): so far only the vset* family.
+ * @brief True if the instruction writes a GPR (rd): vset*, vmv.x.s, vcpop.m and vfirst.m.
  */
 bool VectorInstructionWritesGpr(uint32_t instruction);
 
