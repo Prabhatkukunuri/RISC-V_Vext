@@ -123,7 +123,7 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 # Command-line executable (no GUI/QApplication dependency at runtime).
-add_executable(kites_cli cli/main.cpp cli/repl.cpp)
+add_executable(kites_cli cli/main.cpp cli/repl.cpp cli/run_stats.cpp)
 set_target_properties(kites_cli PROPERTIES OUTPUT_NAME "kites-cli")
 target_link_libraries(kites_cli PRIVATE kites_core)
 target_compile_definitions(kites_cli PRIVATE DISABLE_GUI)

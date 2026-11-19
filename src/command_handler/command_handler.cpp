@@ -188,6 +188,9 @@ void ExecuteLoad(const std::vector<std::string> &args, ProcessorManager &manager
     manager.loadProgram(program);
     state.currentProgram = program;
     state.breakpoints.clear();
+    // Drop the end-of-program breakpoint LoadProgram plants (as the GUI does before a run):
+    // the pipelined VMs clock past the end of the program to drain and would stop there.
+    manager.setBreakpoints(state.breakpoints);
     state.programLoaded = true;
 }
 

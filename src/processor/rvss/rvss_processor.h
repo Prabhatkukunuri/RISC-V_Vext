@@ -56,6 +56,9 @@ class RVSSProcessor : public ProcessorBase
 
     RVSingleStageStepDelta current_delta_;
 
+    /// True while Run() is calling Step(): Step() then skips writing the dump files.
+    bool in_run_ = false;
+
     void Fetch();
 
     void Decode();

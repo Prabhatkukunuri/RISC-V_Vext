@@ -6,9 +6,11 @@
 #include "command_handler/command_handler.h"
 #include "common/assembled_program.h"
 #include "common/globals.h"
+#include "config/config.h"
 #include "processor/processor_manager.h"
 #include "processor/processor_types.h"
 #include "repl.h"
+#include "run_stats.h"
 #include "utils/utils.h"
 
 #include <QCoreApplication>
@@ -26,12 +28,17 @@ void printUsage(const char *programName)
 {
     std::cerr
         << "Usage: " << programName
-        << " [assembly-file] [--vm <name>] [--mem-dump <hex_addr> <row_count>]... [--repl|-i]\n"
+        << " [assembly-file] [--vm <name>] [--mem-dump <hex_addr> <row_count>]... [--stats]\n"
+        << "       [--vlen <bits>] [--repl|-i]\n"
         << "  assembly-file   optional; if given without --repl, assembles, runs to\n"
         << "                  completion, and dumps state (batch mode)\n"
         << "  --vm <name>     rvss (default) | rv5-nh-nf | rv5-h-nf | rv5-nh-f | rv5-h-f\n"
         << "  --mem-dump      dump <row_count> 8-byte rows starting at <hex_addr>; "
            "repeatable (batch mode only)\n"
+        << "  --stats         collect run statistics (batch mode only): prints a summary and\n"
+        << "                  writes vm_state/stats_dump.json; the instruction mix, memory\n"
+        << "                  traffic and vector work need --vm rvss\n"
+        << "  --vlen <bits>   vector register length (default 128)\n"
         << "  --repl, -i      drop into the interactive REPL instead of auto-running;\n"
         << "                  if assembly-file is given it is loaded before the prompt\n"
         << "  (running with no assembly-file also enters the REPL)\n";
@@ -56,6 +63,7 @@ int main(int argc, char *argv[])
     std::string processorTypeStr = "rvss";
     std::vector<std::string> memDumpArgs;
     bool replRequested = false;
+    bool statsRequested = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -80,6 +88,28 @@ int main(int argc, char *argv[])
             }
             memDumpArgs.push_back(argv[++i]);
             memDumpArgs.push_back(argv[++i]);
+        }
+        else if (arg == "--stats")
+        {
+            statsRequested = true;
+        }
+        else if (arg == "--vlen")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: " << arg << " requires a value in bits.\n";
+                printUsage(argv[0]);
+                return 1;
+            }
+            try
+            {
+                Kites::vm_config::config.setVlen(std::stoull(argv[++i]));
+            }
+            catch (const std::exception &e)
+            {
+                std::cerr << "Error: invalid " << arg << " value: " << e.what() << "\n";
+                return 1;
+            }
         }
         else if (arg == "--repl" || arg == "-i")
         {
@@ -123,6 +153,11 @@ int main(int argc, char *argv[])
             {
                 Kites::AssembledProgram program = Kites::assemble(assemblyFile);
                 manager.loadProgram(program);
+                // LoadProgram plants a breakpoint at the end of the program; the GUI replaces
+                // it with the editor's breakpoints before every run, so do the same here.
+                // Otherwise the pipelined VMs, which keep clocking past the end of the program
+                // to drain, stop there and wait forever.
+                manager.setBreakpoints(state.breakpoints);
                 state.currentProgram = program;
                 state.programLoaded = true;
                 std::cout << "Loaded '" << assemblyFile << "': " << program.text_buffer.size()
@@ -165,6 +200,18 @@ int main(int argc, char *argv[])
     // program takes N seconds to run.
     manager.setStepDelay(0);
     manager.loadProgram(program);
+    // See the REPL branch above: drop the end-of-program breakpoint that LoadProgram plants.
+    manager.setBreakpoints({});
+
+    Kites::cli::RunStatsCollector stats(program, *manager.getRegisterFile(),
+                                        Kites::vm_config::config.getVlen());
+    const bool singleCycle = processorTypeIt->second == Kites::ProcessorType::RVSS;
+    if (statsRequested && singleCycle)
+    {
+        QObject::connect(&manager, &Kites::ProcessorManager::processorClockedSignal, &manager,
+                         [&stats](const Kites::ProcessorState &processorState)
+                         { stats.onClock(processorState); });
+    }
 
     // Known limitation: a program hitting a blocking read syscall will hang here
     // forever, since nothing in this CLI feeds terminal stdin into the VM's input
@@ -191,12 +238,24 @@ int main(int argc, char *argv[])
         }
     }
 
+    if (statsRequested)
+    {
+        std::cout << stats.write(Kites::globals::vm_state_directory / "stats_dump.json",
+                                 processorTypeStr, manager.getCycles(),
+                                 manager.getInstructionsRetired(), singleCycle);
+    }
+
     std::cout << "Assembled '" << assemblyFile << "': " << program.text_buffer.size()
                << " instruction word(s), " << program.data_buffer.size() << " data item(s).\n"
                << "Run " << (runFailed ? "failed" : "completed") << ".\n"
                << "Registers   -> " << Kites::globals::registers_dump_file_path.string() << "\n"
                << "Disassembly -> " << Kites::globals::disassembly_file_path.string() << "\n"
                << "Errors      -> " << Kites::globals::errors_dump_file_path.string();
+    if (statsRequested)
+    {
+        std::cout << "\nStatistics  -> "
+                  << (Kites::globals::vm_state_directory / "stats_dump.json").string();
+    }
     if (!memDumpArgs.empty())
     {
         std::cout << "\nMemory      -> " << Kites::globals::memory_dump_file_path.string();

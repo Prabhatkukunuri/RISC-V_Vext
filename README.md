@@ -26,6 +26,8 @@ on the single-cycle VM and all four 5-stage pipeline variants.
 | Multiply-add | `vmacc`, `vnmsac`, `vmadd`, `vnmsub`, widening `vwmacc(u/su/us)` |
 | Merge/move | `vmerge`, `vmv.v.v` / `.v.x` / `.v.i` |
 | Permutation (section 16) | `vmv.x.s`, `vmv.s.x`, `vslideup`, `vslidedown`, `vslide1up`, `vslide1down`, `vrgather` (`.vv` / `.vx` / `.vi`), `vrgatherei16.vv`, `vcompress.vm`, `vmv1r.v` / `vmv2r.v` / `vmv4r.v` / `vmv8r.v` |
+| Reductions (section 14) | `vredsum`, `vredand`, `vredor`, `vredxor`, `vredmin(u)`, `vredmax(u)`, widening `vwredsum(u)` |
+| Mask instructions (section 15) | `vmand` / `vmnand` / `vmandn` / `vmor` / `vmnor` / `vmorn` / `vmxor` / `vmxnor`, `vcpop.m`, `vfirst.m`, `vmsbf.m`, `vmsif.m`, `vmsof.m`, `viota.m`, `vid.v` |
 | Loads and stores | the complete set from spec section 7 (316 mnemonics), listed below |
 
 Loads and stores cover every addressing mode:
@@ -209,23 +211,52 @@ The vector extension has its own suites:
 | `test/vector_carry_test.cpp` | add-with-carry / subtract-with-borrow |
 | `test/vector_load_store_test.cpp` | all loads and stores, including misaligned elements |
 | `test/vector_permute_test.cpp` | permutation instructions |
+| `test/vector_reduction_test.cpp`, `test/vector_mask_test.cpp` | reductions and mask instructions |
+| `test/vector_spec_sweep_test.cpp` | spec-wide sweep of the arithmetic instructions |
 
 Encodings are checked against LLVM (`llvm-mc`) and the official `riscv-opcodes` tables, and every program runs on
-all five VMs. The full suite has 297 tests, all passing.
+all five VMs. The full suite has 332 tests, all passing.
 
 ## CLI
 
-See [docs/CLI.md](docs/CLI.md) for how to build and use the headless command-line executable.
+See [docs/CLI.md](docs/CLI.md) for how to build and use the headless command-line executable. Options added for
+the vector work:
+
+| Option | Effect |
+|---|---|
+| `--vm rvss\|rv5-nh-nf\|rv5-h-nf\|rv5-nh-f\|rv5-h-f` | pick the VM; all five now run to completion in batch mode |
+| `--vlen <bits>` | vector register length (default 128) |
+| `--stats` | print run statistics and write `vm_state/stats_dump.json`: cycles, instructions retired, and on `rvss` the instruction mix, bytes moved and vector elements processed |
+
+## Scalar vs. vector benchmarks
+
+`benchmarks/` compares five common operations, each written in assembly twice: as a plain scalar RV64IM loop and
+as an RVV vector loop. Both versions read the same data, and each run is checked for the exact expected output.
+Speedup is measured in assembly instructions executed (scalar / vector, on the single-cycle VM, VLEN = 128):
+
+| Operation | Scalar | Vector | Speedup |
+|---|---:|---:|---:|
+| Vector add (256 elements) | 2,311 | 95 | 24.3x |
+| AXPY, out = 3x + y (256 elements) | 2,568 | 96 | 26.8x |
+| Dot product (256 elements) | 2,057 | 91 | 22.6x |
+| Array maximum (256 elements) | 1,289 | 66 | 19.5x |
+| Matrix multiply (16x16) | 35,640 | 1,945 | 18.3x |
+
+```bash
+python benchmarks/run_benchmarks.py          # finds build/*/kites-cli; needs matplotlib for the chart
+```
+
+The programs in `benchmarks/programs/` are hand-written and commented (C equivalent, register map, instruction-count
+derivation and expected result in each header); they also open in the GUI. The script checks every result and writes
+`benchmarks/results/` (RESULTS.md, summary.csv, results.json, speedup.png). The metrics and their analysis are in
+[benchmarks/REPORT.md](benchmarks/REPORT.md).
 
 ## Known limitations
 
-- **Not implemented yet:** fixed-point (saturating, averaging, `vsmul`, scaling shifts, `vnclip`), reductions,
-  mask-register instructions (`vmand`..., `vcpop.m`, `vfirst.m`, `vmsbf.m`..., `viota.m`, `vid.v`) and all vector
+- **Not implemented yet:** fixed-point (saturating, averaging, `vsmul`, scaling shifts, `vnclip`) and all vector
   floating-point instructions, including the floating-point permutations `vfmv.f.s`, `vfmv.s.f`,
   `vfslide1up.vf` and `vfslide1down.vf`.
-- **`la` / `auipc`:** give wrong values on the pipelined VMs, so build addresses with `lui`.
 - **CSR instructions:** not executed by the pipelined VMs.
-- **`kites-cli --vm rv5-*`:** does not finish, even for scalar programs. The single-cycle VM (the default) works,
-  and the test suite runs the pipelined VMs directly.
+- **Cache tab:** typing a very large set count into the cache configuration can crash the GUI.
 - **No `csrr` pseudo-instruction:** read CSRs with `csrrs rd, vl, x0`.
 - **Register names:** `v0`–`v31` cannot be used as label names.

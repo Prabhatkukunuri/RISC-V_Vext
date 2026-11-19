@@ -144,7 +144,9 @@ void RVSSProcessor::Run()
             }
         }
         last_executed_pc_ = program_counter_;
+        in_run_ = true; // Run() writes the dump files once, at the end
         Step();
+        in_run_ = false;
         SetActiveWireNames();
         setProcessorState();
         emit processorClockedSignal(processor_state_);
@@ -155,7 +157,9 @@ void RVSSProcessor::Run()
         // handling the delay
         {
             QMutexLocker locker(&pause_mutex_);
-            if (stop_requested_ || pause_requested_)
+            // A zero delay (the CLI) must not wait at all: on Windows even a 0 ms timed
+            // wait sleeps for a scheduler tick (~16 ms), i.e. ~16 ms per instruction.
+            if (stop_requested_ || pause_requested_ || step_delay_ == 0)
                 continue;
             pause_wait_condition_.wait(&pause_mutex_, step_delay_);
             // we wait for step_delay_ milliseconds or until notified to wake up
@@ -1231,9 +1235,13 @@ void RVSSProcessor::Step()
         std::cout << "VM_PROGRAM_END" << std::endl;
         output_status_ = "VM_PROGRAM_END";
     }
-    DumpRegisters(globals::registers_dump_file_path, registers_);
-    DumpState(globals::vm_state_dump_file_path);
-
+    // Writing both JSON files costs ~16 ms per instruction on Windows; during Run() it
+    // would dominate the run time, and Run() dumps them anyway when it finishes.
+    if (!in_run_)
+    {
+        DumpRegisters(globals::registers_dump_file_path, registers_);
+        DumpState(globals::vm_state_dump_file_path);
+    }
 }
 
 void RVSSProcessor::Undo()

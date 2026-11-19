@@ -53,7 +53,9 @@ void RV5StageVM_Base::Run()
         // handling the delay
         {
             QMutexLocker locker(&pause_mutex_);
-            if (stop_requested_ || pause_requested_)
+            // A zero delay (the CLI) must not wait at all: on Windows even a 0 ms timed
+            // wait sleeps for a scheduler tick (~16 ms), i.e. ~16 ms per instruction.
+            if (stop_requested_ || pause_requested_ || step_delay_ == 0)
                 continue;
             pause_wait_condition_.wait(&pause_mutex_, step_delay_);
             // we wait for step_delay_ milliseconds or until notified to wake up

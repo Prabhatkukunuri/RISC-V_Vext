@@ -245,6 +245,13 @@ void RV5StageProcessorHNF::pipeline_execute()
     {
         alu_result = static_cast<uint64_t>(id_ex_reg_.imm << 12);
     }
+    // auipc: pc + sign-extended (imm << 12). Without this the ALU added two register
+    // values instead, so auipc (and la, which expands to auipc + addi) gave garbage.
+    if ((cur_instruction & 0b1111111) == 0b0010111)
+    {
+        const int32_t upper = static_cast<int32_t>(static_cast<uint32_t>(id_ex_reg_.imm) << 12);
+        alu_result = id_ex_reg_.pc + static_cast<uint64_t>(static_cast<int64_t>(upper));
+    }
 
     ex_mem_reg_.prev_reg_write = ex_mem_reg_.reg_write;
     ex_mem_reg_.prev_rd = ex_mem_reg_.rd;
