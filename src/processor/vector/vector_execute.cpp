@@ -329,6 +329,9 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
         break;
     case VectorOpShape::Permute:
         break; // handled by ExecutePermute()
+    case VectorOpShape::Reduction:
+    case VectorOpShape::WideningReduction:
+        break; // handled by ExecuteReduction()
     }
     const uint64_t opWidth = std::max(dest.eew, src2.eew);
 
@@ -519,6 +522,73 @@ void ExecuteIntegerArith(const VectorArithInfo &info, uint32_t instruction, uint
  * Section 16, permutation instructions. Like the rest of this file, tail and masked-off
  * elements are left undisturbed, and nothing is written when vstart >= vl.
  */
+/**
+ * Integer reductions (RVV 1.0, 14.1 / 14.2): vd[0] = vs1[0] op vs2[0] op ... op vs2[vl-1],
+ * skipping masked-off vs2 elements. vs2 is an LMUL group; vd and vs1 are single registers of
+ * which only element 0 is used (2*SEW wide for the widening sums). Only vd[0] is written: the
+ * rest of vd is tail and stays undisturbed. With vl = 0 nothing is written.
+ *
+ * As in Spike, vd may overlap any source (v0 included, even when masked), and a non-zero vstart
+ * is illegal.
+ */
+void ExecuteReduction(const VectorArithInfo &info, uint32_t instruction, RegisterFile &registers,
+                      std::vector<RegisterChange> &changes)
+{
+    const uint32_t vd = (instruction >> 7) & 0x1F;
+    const uint32_t vs1 = (instruction >> 15) & 0x1F;
+    const uint32_t vs2 = (instruction >> 20) & 0x1F;
+    const bool masked = ((instruction >> 25) & 1) == 0;
+
+    const Vtype vtype = RequireValidVtype(instruction, registers);
+    const uint64_t sew = vtype.sew;
+    const bool widening = info.shape == VectorOpShape::WideningReduction;
+    const uint64_t accWidth = widening ? 2 * sew : sew; // width of vs1[0] and vd[0]
+    if (accWidth > ELEN)
+    {
+        ThrowIllegal(instruction, "2*SEW = " + std::to_string(accWidth) + " exceeds ELEN = 64");
+    }
+    RequireAligned(instruction, vs2, vtype.lmulLog2, "vs2");
+    if (registers.ReadCsr(RegisterFile::CSR_VSTART) != 0)
+    {
+        ThrowIllegal(instruction, "vstart must be 0 for a reduction");
+    }
+
+    const uint64_t vl = registers.ReadCsr(RegisterFile::CSR_VL);
+    if (vl == 0)
+    {
+        return; // no operation: vd is not written
+    }
+
+    // The accumulator and every vs2 element are extended to 64 bits with the instruction's
+    // signedness, so one 64-bit operation (and one signed or unsigned compare) is exact.
+    uint64_t acc = Extend(registers.ReadVectorElement(vs1, 0, accWidth), accWidth, info.isSigned);
+    for (uint64_t i = 0; i < vl; ++i)
+    {
+        if (masked && !registers.ReadMaskBit(0, i))
+        {
+            continue; // masked-off elements take no part
+        }
+        const uint64_t element =
+            Extend(registers.ReadVectorElement(vs2, i, sew), sew, info.isSigned);
+        switch (info.op)
+        {
+        case VectorArithOp::Min:
+            acc = Compare(VectorArithOp::Lt, element, acc, info.isSigned) ? element : acc;
+            break;
+        case VectorArithOp::Max:
+            acc = Compare(VectorArithOp::Gt, element, acc, info.isSigned) ? element : acc;
+            break;
+        default: // Add, And, Or, Xor
+            acc = ApplyArith(info.op, acc, element, accWidth);
+            break;
+        }
+    }
+
+    DestinationRecorder recorder(registers, vd, 1);
+    registers.WriteVectorElement(vd, 0, accWidth, acc & SewMask(accWidth));
+    recorder.Record(changes);
+}
+
 void ExecutePermute(const VectorArithInfo &info, uint32_t instruction, uint64_t rs1Value,
                     RegisterFile &registers, std::vector<RegisterChange> &changes,
                     VectorExecResult &result)
@@ -786,6 +856,12 @@ VectorExecResult ExecuteVectorInstruction(uint32_t instruction, uint64_t rs1Valu
     }
     if (const VectorArithInfo *info = DecodeVectorArith(instruction))
     {
+        if (info->shape == VectorOpShape::Reduction ||
+            info->shape == VectorOpShape::WideningReduction)
+        {
+            ExecuteReduction(*info, instruction, registers, changes);
+            return result;
+        }
         if (info->shape == VectorOpShape::Permute)
         {
             ExecutePermute(*info, instruction, rs1Value, registers, changes, result);

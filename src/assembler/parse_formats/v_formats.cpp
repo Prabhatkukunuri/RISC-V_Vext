@@ -16,6 +16,7 @@
 
 namespace Kites
 {
+// Parses the vsetvli, vsetivli instructions and returns true if we can fit the tokens into the vtype else false.
 bool Parser::parseVtypeOperands(int first, uint64_t maxImm, uint64_t &vtype)
 {
     const unsigned int line = currentToken().line_number;
@@ -122,7 +123,7 @@ bool Parser::parseVtypeOperands(int first, uint64_t maxImm, uint64_t &vtype)
     vtype = rvv::EncodeVtype(sew, lmulLog2, tailAgnostic, maskAgnostic);
     return true;
 }
-
+//Parse vsetvli rd, rs1, <vtype>
 bool Parser::parse_O_GPR_C_GPR_C_VTYPE()
 {
     const unsigned int line = currentToken().line_number;
@@ -155,7 +156,7 @@ bool Parser::parse_O_GPR_C_GPR_C_VTYPE()
     instruction_index_++;
     return true;
 }
-
+//Parse vsetivli rd, uimm, <vtype>
 bool Parser::parse_O_GPR_C_I_C_VTYPE()
 {
     const unsigned int line = currentToken().line_number;
@@ -203,9 +204,7 @@ bool Parser::parse_O_GPR_C_I_C_VTYPE()
 namespace
 {
 /**
- * A compare the ISA doesn't encode, which the assembler rewrites into one it does (RVV 1.0,
- * 11.8; the same mapping llvm-mc uses).
- */
+ * A compare the ISA doesn't encode, which the assembler rewrites into one it does*/
 struct VectorCompareAlias
 {
     const char *name;
@@ -240,7 +239,7 @@ const VectorCompareAlias *FindVectorCompareAlias(const std::string &name)
     return nullptr;
 }
 } // namespace
-
+//Parses all the vector arithemetic instructions and checks for errors which do not depend on runtime variables
 bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
 {
     const unsigned int line = currentToken().line_number;
@@ -368,9 +367,12 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
     // The source operand's token type (vmv.v.v reaches here with no sourceType).
     const std::optional<TokenType> sourceKind =
         sourceAt < 0 ? std::nullopt : std::optional<TokenType>(operands[sourceAt]);
-    // Compares write a mask, which may go to v0 even under v0.t.
+    // Compares write a mask, which may go to v0 even under v0.t; reductions write only vd[0]
+    // and may overlap any source, the mask register included.
     const bool isCompare = opInfo && opInfo->shape == rvv::VectorOpShape::Compare;
-    if (masked && vd.value == "v0" && !isCompare)
+    const bool isReduction = opInfo && (opInfo->shape == rvv::VectorOpShape::Reduction ||
+                                        opInfo->shape == rvv::VectorOpShape::WideningReduction);
+    if (masked && vd.value == "v0" && !isCompare && !isReduction)
     {
         return reject(vd, "Destination overlaps the mask register",
                       opInfo && opInfo->vmField == 0
@@ -470,7 +472,7 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
     instruction_index_++;
     return true;
 }
-
+// These are given out as endpoints to the parser for parsing the different formats. Even though it internally calls the same parser
 bool Parser::parse_O_VR_C_VR_C_VR()
 {
     return parseVectorArith(TokenType::VEC_REGISTER);
@@ -527,7 +529,7 @@ bool Parser::parse_O_GPR_C_VR()
 {
     return parseVectorArith(std::nullopt); // vmv.x.s rd, vs2
 }
-
+// Kaustubh look into this
 bool Parser::parseVectorMemory(TokenType extraType)
 {
     const unsigned int line = currentToken().line_number;
@@ -642,7 +644,7 @@ bool Parser::parseVectorMemory(TokenType extraType)
     instruction_index_++;
     return true;
 }
-
+// Given as endpoints to the parser eventhough depends on the same internal parser
 bool Parser::parse_O_VR_C_LP_GPR_RP()
 {
     return parseVectorMemory(TokenType::EOF_);

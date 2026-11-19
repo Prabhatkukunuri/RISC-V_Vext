@@ -236,6 +236,19 @@ constexpr VectorArithInfo kVectorArith[] = {
     {0b100111, FUNCT3_OPIVI, 1, Op::WholeMove, Shape::Permute, U, 2, "vmv2r.v", -1, 1},
     {0b100111, FUNCT3_OPIVI, 3, Op::WholeMove, Shape::Permute, U, 4, "vmv4r.v", -1, 1},
     {0b100111, FUNCT3_OPIVI, 7, Op::WholeMove, Shape::Permute, U, 8, "vmv8r.v", -1, 1},
+
+    // 14.1 / 14.2 Integer reductions: vd[0] = vs1[0] op vs2[0..vl-1] (active elements only).
+    // isSigned picks signed min/max, and sign- vs zero-extension for the widening sums.
+    {0b000000, FUNCT3_OPMVV, -1, Op::Add, Shape::Reduction, U, 1, "vredsum.vs"},
+    {0b000001, FUNCT3_OPMVV, -1, Op::And, Shape::Reduction, U, 1, "vredand.vs"},
+    {0b000010, FUNCT3_OPMVV, -1, Op::Or, Shape::Reduction, U, 1, "vredor.vs"},
+    {0b000011, FUNCT3_OPMVV, -1, Op::Xor, Shape::Reduction, U, 1, "vredxor.vs"},
+    {0b000100, FUNCT3_OPMVV, -1, Op::Min, Shape::Reduction, U, 1, "vredminu.vs"},
+    {0b000101, FUNCT3_OPMVV, -1, Op::Min, Shape::Reduction, S, 1, "vredmin.vs"},
+    {0b000110, FUNCT3_OPMVV, -1, Op::Max, Shape::Reduction, U, 1, "vredmaxu.vs"},
+    {0b000111, FUNCT3_OPMVV, -1, Op::Max, Shape::Reduction, S, 1, "vredmax.vs"},
+    {0b110000, FUNCT3_OPIVV, -1, Op::Add, Shape::WideningReduction, U, 1, "vwredsumu.vs"},
+    {0b110001, FUNCT3_OPIVV, -1, Op::Add, Shape::WideningReduction, S, 1, "vwredsum.vs"},
 };
 } // namespace
 

@@ -109,6 +109,8 @@ enum class VectorOpShape
     Narrowing,   ///< vd and the source are SEW, vs2 is 2*SEW (vnsrl.wv, vnsra.wi, ...)
     Compare,     ///< vs2 and the source are SEW; vd is a mask (one bit per element, one register)
     Permute,     ///< section 16: slides, gathers, compress and moves (see VectorArithOp)
+    Reduction,   ///< vd[0] = vs1[0] op vs2[*]; vd and vs1 are single registers, all SEW
+    WideningReduction, ///< as Reduction, but vd[0] and vs1[0] are 2*SEW (vwredsum{u})
 };
 
 /**

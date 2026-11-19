@@ -638,7 +638,17 @@
         "vmv1r.v",
         "vmv2r.v",
         "vmv4r.v",
-        "vmv8r.v"
+        "vmv8r.v",
+        "vredsum.vs",
+        "vredand.vs",
+        "vredor.vs",
+        "vredxor.vs",
+        "vredminu.vs",
+        "vredmin.vs",
+        "vredmaxu.vs",
+        "vredmax.vs",
+        "vwredsumu.vs",
+        "vwredsum.vs"
     ],
     "PseudoInstruction": [
         "la",

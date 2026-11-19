@@ -354,7 +354,17 @@ enum class Instruction
     kvmv1r_v,
     kvmv2r_v,
     kvmv4r_v,
-    kvmv8r_v
+    kvmv8r_v,
+    kvredsum_vs,
+    kvredand_vs,
+    kvredor_vs,
+    kvredxor_vs,
+    kvredminu_vs,
+    kvredmin_vs,
+    kvredmaxu_vs,
+    kvredmax_vs,
+    kvwredsumu_vs,
+    kvwredsum_vs
 };
 
 // TODO: use enum class for instruction encoding

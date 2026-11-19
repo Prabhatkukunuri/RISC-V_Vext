@@ -347,6 +347,17 @@ std::unordered_map<Instruction, InstructionEncoding> instruction_encoding_map = 
     {Instruction::kvmv2r_v, {0b1010111, -1, 0b011, 0b00001, 0b100111, -1}},
     {Instruction::kvmv4r_v, {0b1010111, -1, 0b011, 0b00011, 0b100111, -1}},
     {Instruction::kvmv8r_v, {0b1010111, -1, 0b011, 0b00111, 0b100111, -1}},
+    // RVV integer reductions (14.1 / 14.2)
+    {Instruction::kvredsum_vs, {0b1010111, -1, 0b010, -1, 0b000000, -1}},
+    {Instruction::kvredand_vs, {0b1010111, -1, 0b010, -1, 0b000001, -1}},
+    {Instruction::kvredor_vs, {0b1010111, -1, 0b010, -1, 0b000010, -1}},
+    {Instruction::kvredxor_vs, {0b1010111, -1, 0b010, -1, 0b000011, -1}},
+    {Instruction::kvredminu_vs, {0b1010111, -1, 0b010, -1, 0b000100, -1}},
+    {Instruction::kvredmin_vs, {0b1010111, -1, 0b010, -1, 0b000101, -1}},
+    {Instruction::kvredmaxu_vs, {0b1010111, -1, 0b010, -1, 0b000110, -1}},
+    {Instruction::kvredmax_vs, {0b1010111, -1, 0b010, -1, 0b000111, -1}},
+    {Instruction::kvwredsumu_vs, {0b1010111, -1, 0b000, -1, 0b110000, -1}},
+    {Instruction::kvwredsum_vs, {0b1010111, -1, 0b000, -1, 0b110001, -1}},
 
     {Instruction::kfmadd_s, {0b1000011, 0b00, -1, -1, -1, -1}},
     {Instruction::kfmsub_s, {0b1000111, 0b00, -1, -1, -1, -1}},
@@ -668,6 +679,16 @@ std::unordered_map<std::string, Instruction> instruction_string_map = {
     {"vmv2r.v", Instruction::kvmv2r_v},
     {"vmv4r.v", Instruction::kvmv4r_v},
     {"vmv8r.v", Instruction::kvmv8r_v},
+    {"vredsum.vs", Instruction::kvredsum_vs},
+    {"vredand.vs", Instruction::kvredand_vs},
+    {"vredor.vs", Instruction::kvredor_vs},
+    {"vredxor.vs", Instruction::kvredxor_vs},
+    {"vredminu.vs", Instruction::kvredminu_vs},
+    {"vredmin.vs", Instruction::kvredmin_vs},
+    {"vredmaxu.vs", Instruction::kvredmaxu_vs},
+    {"vredmax.vs", Instruction::kvredmax_vs},
+    {"vwredsumu.vs", Instruction::kvwredsumu_vs},
+    {"vwredsum.vs", Instruction::kvwredsum_vs},
 
     {"fmadd.s", Instruction::kfmadd_s},
     {"fmsub.s", Instruction::kfmsub_s},
@@ -739,6 +760,7 @@ static const std::unordered_set<std::string> valid_instructions = {
     "vmadc.vx", "vmadc.vi", "vsbc.vvm", "vsbc.vxm", "vmsbc.vvm", "vmsbc.vxm", "vmsbc.vv", "vmsbc.vx",
     // Permutation
     "vmv.x.s", "vmv.s.x", "vslideup.vx", "vslideup.vi", "vslidedown.vx", "vslidedown.vi", "vslide1up.vx", "vslide1down.vx", "vrgather.vv", "vrgather.vx", "vrgather.vi", "vrgatherei16.vv", "vcompress.vm", "vmv1r.v", "vmv2r.v", "vmv4r.v", "vmv8r.v",
+    "vredsum.vs", "vredand.vs", "vredor.vs", "vredxor.vs", "vredminu.vs", "vredmin.vs", "vredmaxu.vs", "vredmax.vs", "vwredsumu.vs", "vwredsum.vs",
     // Compare aliases (the parser rewrites them; see v_formats.cpp)
     "vmsgt.vv", "vmsgtu.vv", "vmsge.vv", "vmsgeu.vv", "vmslt.vi", "vmsltu.vi", "vmsge.vi",
     "vmsgeu.vi"
@@ -852,7 +874,8 @@ static const std::unordered_set<std::string> VectorArithInstructions = {
     "vwmaccus.vx", "vmerge.vvm", "vmerge.vxm", "vmerge.vim", "vmv.v.v", "vmv.v.x", "vmv.v.i",
     "vadc.vvm", "vadc.vxm", "vadc.vim", "vmadc.vvm", "vmadc.vxm", "vmadc.vim", "vmadc.vv",
     "vmadc.vx", "vmadc.vi", "vsbc.vvm", "vsbc.vxm", "vmsbc.vvm", "vmsbc.vxm", "vmsbc.vv", "vmsbc.vx",
-    "vmv.x.s", "vmv.s.x", "vslideup.vx", "vslideup.vi", "vslidedown.vx", "vslidedown.vi", "vslide1up.vx", "vslide1down.vx", "vrgather.vv", "vrgather.vx", "vrgather.vi", "vrgatherei16.vv", "vcompress.vm", "vmv1r.v", "vmv2r.v", "vmv4r.v", "vmv8r.v"};
+    "vmv.x.s", "vmv.s.x", "vslideup.vx", "vslideup.vi", "vslidedown.vx", "vslidedown.vi", "vslide1up.vx", "vslide1down.vx", "vrgather.vv", "vrgather.vx", "vrgather.vi", "vrgatherei16.vv", "vcompress.vm", "vmv1r.v", "vmv2r.v", "vmv4r.v", "vmv8r.v",
+    "vredsum.vs", "vredand.vs", "vredor.vs", "vredxor.vs", "vredminu.vs", "vredmin.vs", "vredmaxu.vs", "vredmax.vs", "vwredsumu.vs", "vwredsum.vs"};
 
 static const std::unordered_set<std::string> MExtensionInstructions = {
     "mul",  "mulh", "mulhsu", "mulhu", "div",  "divu", "rem",
@@ -1523,6 +1546,16 @@ std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map 
     {"vmv2r.v", {SyntaxType::O_VR_C_VR}},
     {"vmv4r.v", {SyntaxType::O_VR_C_VR}},
     {"vmv8r.v", {SyntaxType::O_VR_C_VR}},
+    {"vredsum.vs", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vredand.vs", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vredor.vs", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vredxor.vs", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vredminu.vs", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vredmin.vs", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vredmaxu.vs", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vredmax.vs", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vwredsumu.vs", {SyntaxType::O_VR_C_VR_C_VR}},
+    {"vwredsum.vs", {SyntaxType::O_VR_C_VR_C_VR}},
     // Compare aliases, rewritten by the parser into the instructions above.
     {"vmsgt.vv", {SyntaxType::O_VR_C_VR_C_VR}},
     {"vmsgtu.vv", {SyntaxType::O_VR_C_VR_C_VR}},
