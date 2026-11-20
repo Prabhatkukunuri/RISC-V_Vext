@@ -241,6 +241,9 @@ void RV5StageProcessorHNF::pipeline_execute()
             alu_result = execute_vector(cur_instruction, alu_in1, alu_in2);
         }
     }
+    // CSR instructions and auipc produce their result outside the ALU.
+    alu_result = special_execute_result(cur_instruction, alu_result, alu_in1);
+
     if ((cur_instruction & 0b1111111) == 0b0110111) // lui
     {
         alu_result = static_cast<uint64_t>(id_ex_reg_.imm << 12);

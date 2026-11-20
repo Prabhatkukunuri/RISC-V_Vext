@@ -94,7 +94,29 @@ class RV5StageVM_Base : public ProcessorBase
     uint64_t execute_float();
     uint64_t execute_double();
 
-    void execute_csr() {};
+    /**
+     * @brief Executes a Zicsr instruction (csrrw/csrrs/csrrc and the immediate forms) in EX:
+     * the CSR is written now, with the same rules as the single-cycle VM (set/clear forms only
+     * write a non-zero operand; writing a read-only CSR is an illegal instruction), and the old
+     * CSR value is returned as the result that WB writes to rd.
+     * @param rs1_value x[rs1] after forwarding (ignored by the immediate forms).
+     */
+    uint64_t execute_csr(uint32_t instruction, uint64_t rs1_value);
+
+    /**
+     * @brief EX results that don't come from the ALU: the old CSR value for a CSR instruction
+     * (see execute_csr) and PC + (imm << 12) for auipc. Other instructions keep @p alu_result.
+     */
+    uint64_t special_execute_result(uint32_t instruction, uint64_t alu_result,
+                                    uint64_t rs1_value);
+
+    /**
+     * @brief x[reg] as an instruction in EX must see it: the result of the instruction one
+     * stage ahead (EX/MEM) if it writes that GPR, else the register file (WB runs before EX in
+     * a cycle, so it already holds results from two stages ahead). For pipelines with
+     * forwarding; used where EX reads a GPR directly, e.g. the base address of FP loads/stores.
+     */
+    uint64_t forwarded_gpr(uint8_t reg) const;
 
     /**
      * @brief Executes a vector instruction (OP-V, or a vector load/store) in EX. Vector registers,

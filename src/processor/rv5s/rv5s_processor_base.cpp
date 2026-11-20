@@ -1,6 +1,8 @@
 #include "common/debug_colors.h"
 #include "common/instructions.h"
 #include "processor/rv5s/rv5s_processor_base.h"
+#include <sstream>
+#include <stdexcept>
 #include <thread>
 
 namespace Kites
@@ -617,6 +619,7 @@ void RV5StageVM_Base::pipeline_writeback()
         case 0b0111011: // OP-32 R-type (ADDW, SUBW, MULW, DIVW, DIVUW, REMW, REMUW, SLLW, SRLW, SRAW)
         case 0b0011011: // OP-32 I-type (ADDIW, SLLIW, SRLIW, SRAIW)
         case rvv::OPCODE_OP_V: // vset*: the new vl
+        case 0b1110011:        // csrr*: the old CSR value
         {
             registers_.WriteGpr(mem_wb_reg_.rd, write_data);
             break;
@@ -726,6 +729,100 @@ void RV5StageVM_Base::pipeline_writeback_double()
     {
         current_delta_.register_changes.push_back({reg_index, reg_type, old_reg, new_reg});
     }
+}
+
+namespace
+{
+/// Whether an instruction with these control signals writes a GPR. FP instructions set
+/// reg_write too; only compares, fcvt to integer, fmv.x and fclass actually target a GPR.
+bool WritesGpr(uint32_t instruction, bool reg_write, bool freg_write)
+{
+    if (!reg_write)
+    {
+        return false;
+    }
+    if (!freg_write)
+    {
+        return true;
+    }
+    const uint8_t funct7 = ((instruction >> 25) & 0x7F) & ~1u; // without the .s/.d bit
+    return (instruction & 0x7F) == 0b1010011 &&
+           (funct7 == 0b1010000 || funct7 == 0b1100000 || funct7 == 0b1110000);
+}
+} // namespace
+
+uint64_t RV5StageVM_Base::forwarded_gpr(uint8_t reg) const
+{
+    if (reg == 0)
+    {
+        return 0;
+    }
+    if (ex_mem_reg_.rd == reg &&
+        WritesGpr(ex_mem_reg_.instruction, ex_mem_reg_.reg_write, ex_mem_reg_.freg_write))
+    {
+        return ex_mem_reg_.alu_result;
+    }
+    return registers_.ReadGpr(reg);
+}
+
+uint64_t RV5StageVM_Base::execute_csr(uint32_t instruction, uint64_t rs1_value)
+{
+    const uint8_t funct3 = (instruction >> 12) & 0x7;
+    const uint8_t rs1 = (instruction >> 15) & 0x1F;
+    const auto csr = static_cast<uint16_t>((instruction >> 20) & 0xFFF);
+    const uint64_t old_value = registers_.ReadCsr(csr);
+    const uint64_t operand = (funct3 & 0b100) ? rs1 : rs1_value; // csrr*i: zero-extended uimm
+
+    uint64_t new_value = old_value;
+    bool writes = false;
+    switch (funct3 & 0b011)
+    {
+    case 0b01: // csrrw / csrrwi: always write
+        new_value = operand;
+        writes = true;
+        break;
+    case 0b10: // csrrs / csrrsi: set bits, write only if there are any
+        new_value = old_value | operand;
+        writes = operand != 0;
+        break;
+    case 0b11: // csrrc / csrrci: clear bits
+        new_value = old_value & ~operand;
+        writes = operand != 0;
+        break;
+    default:
+        return old_value;
+    }
+    if (writes)
+    {
+        if (IsReadOnlyCsr(csr))
+        {
+            std::ostringstream message;
+            message << "Illegal instruction: write to read-only CSR 0x" << std::hex << csr;
+            throw std::runtime_error(message.str());
+        }
+        registers_.WriteCsr(csr, new_value);
+        const uint64_t written = registers_.ReadCsr(csr);
+        if (written != old_value)
+        {
+            current_delta_.register_changes.push_back({csr, 1, old_value, written});
+        }
+    }
+    return old_value;
+}
+
+uint64_t RV5StageVM_Base::special_execute_result(uint32_t instruction, uint64_t alu_result,
+                                                 uint64_t rs1_value)
+{
+    const uint8_t opcode = instruction & 0x7F;
+    if (opcode == 0b1110011 && ((instruction >> 12) & 0x7) != 0)
+    {
+        return execute_csr(instruction, rs1_value);
+    }
+    if (opcode == 0b0010111) // auipc: PC + sign-extended (imm << 12)
+    {
+        return id_ex_reg_.pc + static_cast<uint64_t>(static_cast<int64_t>(id_ex_reg_.imm << 12));
+    }
+    return alu_result;
 }
 
 uint64_t RV5StageVM_Base::execute_vector(uint32_t instruction, uint64_t rs1_value,

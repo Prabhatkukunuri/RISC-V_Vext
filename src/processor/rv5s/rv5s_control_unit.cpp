@@ -113,6 +113,9 @@ void RV5SControlUnit::SetControlSignals(uint32_t instruction)
         break;
 
     // V Extension
+    case 0b1110011: // SYSTEM: the Zicsr instructions write the old CSR value to rd
+        reg_write_ = ((instruction >> 12) & 0x7) != 0; // not ecall / ebreak
+        break;
     case 0b1010111: // OP-V
         // Only vsetvli/vsetivli/vsetvl write a GPR (the new vl); arithmetic writes vd in EX.
         reg_write_ = rvv::VectorInstructionWritesGpr(instruction);

@@ -313,6 +313,9 @@ void RV5StageProcessorNHF::pipeline_execute()
             alu_result = execute_vector(instruction, alu_in1, alu_in2);
         }
 
+        // CSR instructions and auipc produce their result outside the ALU.
+        alu_result = special_execute_result(instruction, alu_result, alu_in1);
+
         if ((id_ex_reg_.instruction & 0b1111111) == 0b0110111) // lui
         {
             alu_result = static_cast<uint64_t>(id_ex_reg_.imm << 12);
@@ -443,7 +446,7 @@ uint64_t RV5StageProcessorNHF::pipeline_execute_float()
 
     if (funct7 == 0b1101000 || funct7 == 0b1111000 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = registers_.ReadGpr(id_ex_reg_.rs1);
+        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
     }
 
     if (id_ex_reg_.alu_src)
@@ -501,7 +504,7 @@ uint64_t RV5StageProcessorNHF::pipeline_execute_float()
     // requires GPR, use it.
     if (funct7 == 0b1101000 || funct7 == 0b1111000 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = registers_.ReadGpr(id_ex_reg_.rs1);
+        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
     }
 
     // Re-apply immediate if ALUSrc was set (immediates take precedence for reg2)
@@ -551,7 +554,7 @@ uint64_t RV5StageProcessorNHF::pipeline_execute_double()
 
     if (funct7 == 0b1101001 || funct7 == 0b1111001 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = registers_.ReadGpr(id_ex_reg_.rs1);
+        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
     }
 
     if (id_ex_reg_.alu_src)
@@ -607,7 +610,7 @@ uint64_t RV5StageProcessorNHF::pipeline_execute_double()
     // Re-apply GPR-read override for specific instructions
     if (funct7 == 0b1101001 || funct7 == 0b1111001 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = registers_.ReadGpr(id_ex_reg_.rs1);
+        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
     }
 
     // Re-apply immediate for reg2
