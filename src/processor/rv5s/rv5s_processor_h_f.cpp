@@ -361,7 +361,7 @@ void RV5StageProcessorHF::pipeline_execute()
         }
         // temporary fix for lui instruction
 
-        // CSR instructions and auipc produce their result outside the ALU.
+        // CSR instructions produce their result outside the ALU.
         alu_result = special_execute_result(instruction, alu_result, alu_in1);
 
         if ((id_ex_reg_.instruction & 0b1111111) == 0b0110111) // lui

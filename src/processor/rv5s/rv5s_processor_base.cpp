@@ -818,10 +818,6 @@ uint64_t RV5StageVM_Base::special_execute_result(uint32_t instruction, uint64_t 
     {
         return execute_csr(instruction, rs1_value);
     }
-    if (opcode == 0b0010111) // auipc: PC + sign-extended (imm << 12)
-    {
-        return id_ex_reg_.pc + static_cast<uint64_t>(static_cast<int64_t>(id_ex_reg_.imm << 12));
-    }
     return alu_result;
 }
 

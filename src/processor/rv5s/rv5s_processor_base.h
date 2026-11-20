@@ -105,7 +105,8 @@ class RV5StageVM_Base : public ProcessorBase
 
     /**
      * @brief EX results that don't come from the ALU: the old CSR value for a CSR instruction
-     * (see execute_csr) and PC + (imm << 12) for auipc. Other instructions keep @p alu_result.
+     * (see execute_csr). Other instructions keep @p alu_result; auipc is handled in each
+     * variant's pipeline_execute.
      */
     uint64_t special_execute_result(uint32_t instruction, uint64_t alu_result,
                                     uint64_t rs1_value);
