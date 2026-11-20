@@ -1,0 +1,186 @@
+%% Vector additions to the Kites assembler.
+%% Layout: one Assembler block; Lexer, Parser and Code generator stacked inside it.
+%% Each stage block has its name on the left and, to the right, a stacked column of
+%% sub-blocks. Each sub-block lists the files it uses and what each file provides.
+%% Dotted arrows mean "uses", not execution order. "~~~" links are invisible and only
+%% control the layout.
+flowchart TB
+
+subgraph ASM["Assembler"]
+  direction TB
+
+  %% ========================= LEXER =========================
+  subgraph LEXB[" "]
+    direction LR
+    LEXT["<b>Lexer</b><br/>lexer.cpp<br/>Lexer::identifier()"]
+
+    subgraph LEXCOL[" "]
+      direction TB
+
+      subgraph LX1["IsValidVectorRegister"]
+        direction TB
+        subgraph LX1F["registers.cpp"]
+          direction TB
+          r1["valid_vector_registers<br/>{ v0 … v31 }"]
+          r2["IsValidVectorRegister(reg)"]
+        end
+        r3["lexer.cpp: literal 'v0.t' check"]
+        r2 -.-> r1
+      end
+
+      subgraph LX2["isValidInstruction"]
+        direction TB
+        subgraph LX2F["instructions.cpp"]
+          direction TB
+          i1["valid_instructions<br/>scalar + vset + vector arith<br/>+ compare aliases"]
+          i2["isValidInstruction(name)"]
+          i3["isValidVectorMemoryInstruction(name)"]
+        end
+        subgraph LX2D["vector_memory.cpp"]
+          direction TB
+          m1["LookupVectorMemMnemonic(name)"]
+          m2["Table()<br/>generated vle / vse / vlse / vsse<br/>vluxei / vloxei / vsuxei / vsoxei / segment names"]
+        end
+        i2 -.-> i1
+        i2 -.-> i3
+        i3 -.-> m1
+        m1 -.-> m2
+      end
+
+      LX1 ~~~ LX2
+    end
+
+    LEXT ~~~ LEXCOL
+  end
+
+  %% ========================= PARSER =========================
+  subgraph PARB[" "]
+    direction LR
+    PART["<b>Parser</b><br/>parser.cpp<br/>parseTextDirective()"]
+
+    subgraph PARCOL[" "]
+      direction TB
+
+      subgraph P0["Syntax dispatch"]
+        direction TB
+        subgraph P0F["instructions.cpp"]
+          p01["instruction_syntax_map<br/>mnemonic → SyntaxType list"]
+        end
+      end
+
+      subgraph P1["vset parsers"]
+        direction TB
+        subgraph P1F["v_formats.cpp"]
+          direction TB
+          p11["parse_O_GPR_C_GPR_C_VTYPE (vsetvli)"]
+          p12["parse_O_GPR_C_I_C_VTYPE (vsetivli)"]
+          p13["parseVtypeOperands"]
+        end
+        subgraph P1D["vector_config.cpp"]
+          direction TB
+          p14["ParseSewName · ParseLmulName"]
+          p15["EncodeVtype"]
+        end
+        p11 -.-> p13
+        p12 -.-> p13
+        p13 -.-> p14
+        p13 -.-> p15
+      end
+
+      subgraph P2["arith parsers"]
+        direction TB
+        subgraph P2F["v_formats.cpp"]
+          direction TB
+          p21["12 endpoints<br/>parse_O_VR_C_VR_C_VR · _VR_C_VR_C_GPR · _VR_C_VR_C_I<br/>_VR_C_VR · _VR_C_GPR_C_VR · _VR_C_VR_C_VR_C_V0<br/>_VR_C_VR_C_GPR_C_V0 · _VR_C_VR_C_I_C_V0<br/>_VR_C_GPR · _VR_C_I · _GPR_C_VR · _VR"]
+          p22["parseVectorArith(sourceType)"]
+          p23["FindVectorCompareAlias · FindVectorMaskPseudo"]
+        end
+        subgraph P2D["vector_config.cpp / .h"]
+          direction TB
+          p24["kVectorArith table"]
+          p25["FindVectorArith"]
+          p26["HasSourceFirstSyntax · HasUnsignedImmediate"]
+        end
+        p21 -.-> p22
+        p22 -.-> p23
+        p22 -.-> p25
+        p22 -.-> p26
+        p25 -.-> p24
+      end
+
+      subgraph P3["memory parsers"]
+        direction TB
+        subgraph P3F["v_formats.cpp"]
+          direction TB
+          p31["parse_O_VR_C_LP_GPR_RP (unit-stride)<br/>parse_O_VR_C_LP_GPR_RP_C_GPR (strided)<br/>parse_O_VR_C_LP_GPR_RP_C_VR (indexed)"]
+          p32["parseVectorMemory(extraType)"]
+        end
+        subgraph P3D["vector_memory.cpp"]
+          p33["LookupVectorMemMnemonic"]
+        end
+        p31 -.-> p32
+        p32 -.-> p33
+      end
+
+      P0 ~~~ P1 ~~~ P2 ~~~ P3
+    end
+
+    PART ~~~ PARCOL
+  end
+
+  %% ========================= CODE GENERATOR =========================
+  subgraph CGB[" "]
+    direction LR
+    CGT["<b>Code generator</b><br/>code_generator.cpp<br/>generateMachineCode()"]
+
+    subgraph CGCOL[" "]
+      direction TB
+
+      subgraph G0["Class check"]
+        subgraph G0F["instructions.cpp"]
+          direction TB
+          g01["isValidVsetInstruction"]
+          g02["isValidVectorArithInstruction"]
+          g03["isValidVectorMemoryInstruction"]
+        end
+      end
+
+      subgraph G1["vset encoder"]
+        subgraph G1F["code_generator.cpp"]
+          g11["generateVsetMachineCode"]
+        end
+      end
+
+      subgraph G2["arith encoder"]
+        direction TB
+        subgraph G2F["code_generator.cpp"]
+          g21["generateVectorArithMachineCode"]
+        end
+        subgraph G2D["instructions.cpp"]
+          g22["instruction_encoding_map<br/>funct6 / funct3"]
+        end
+        g21 -.-> g22
+      end
+
+      subgraph G3["memory encoder"]
+        direction TB
+        subgraph G3F["code_generator.cpp"]
+          g31["generateVectorMemoryMachineCode"]
+        end
+        subgraph G3D["vector_memory.cpp"]
+          direction TB
+          g32["LookupVectorMemMnemonic"]
+          g33["EncodeVectorMem"]
+        end
+        g31 -.-> g32
+        g31 -.-> g33
+      end
+
+      G0 ~~~ G1 ~~~ G2 ~~~ G3
+    end
+
+    CGT ~~~ CGCOL
+  end
+
+  LEXB --> PARB --> CGB
+end
