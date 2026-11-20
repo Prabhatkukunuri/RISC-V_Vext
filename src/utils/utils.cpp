@@ -6,7 +6,9 @@
 
 #include "utils.h"
 #include "common/globals.h"
+#include "common/instructions.h"
 #include "processor/registers.h"
+#include "processor/vector/vector_execute.h"
 
 
 #include <algorithm>
@@ -437,7 +439,17 @@ void DumpDisasssembly(const std::filesystem::path &filename, AssembledProgram &p
             out << " ????????             ";
         }
 
-        out << ICBlock << std::endl;
+        // Vector instructions are printed from their encoding: ICUnit's generic "rd, rs1, rs2"
+        // order would put vs1 before vs2 (vadd.vv v3, v1, v2 showed as "v3, v2, v1").
+        if (instruction_index < text_buffer.size() &&
+            rvv::IsVectorInstruction(text_buffer[instruction_index]))
+        {
+            out << instruction_set::disassemble(text_buffer[instruction_index]) << std::endl;
+        }
+        else
+        {
+            out << ICBlock << std::endl;
+        }
         instruction_number_disassembly_mapping[instruction_index] = line_number;
 
         ++line_number;
