@@ -428,11 +428,12 @@ void RVSSProcessor::ExecuteVector()
 {
     uint8_t rs1 = (current_instruction_ >> 15) & 0b11111;
     uint8_t rs2 = (current_instruction_ >> 20) & 0b11111;
-    // Vector registers, CSRs and memory (vector loads/stores) are committed here; rd (vset*
-    // only) waits for WriteBack.
-    vector_result_ = rvv::ExecuteVectorInstruction(
-        current_instruction_, registers_.ReadGpr(rs1), registers_.ReadGpr(rs2), registers_,
-        memory_controller_, current_delta_.register_changes, current_delta_.memory_changes);
+    // EX only: arithmetic results (and vset*'s vl/vtype) are computed but not written; a vector
+    // load/store only gets its element addresses (and store data). WriteMemory and
+    // WriteBackVector do the rest.
+    vector_stage_ = rvv::VectorExecuteStage(current_instruction_, registers_.ReadGpr(rs1),
+                                            registers_.ReadGpr(rs2), registers_,
+                                            vector_scratch_);
 }
 
 // TODO: implement writeback for syscalls
@@ -652,10 +653,15 @@ void RVSSProcessor::WriteMemory()
     uint8_t rs2 = (current_instruction_ >> 20) & 0b11111;
     uint8_t funct3 = (current_instruction_ >> 12) & 0b111;
 
-    // Vector loads/stores already accessed memory in Execute.
-    if ((opcode == 0b1110011 && funct3 == 0b000) ||
-        rvv::IsVectorInstruction(current_instruction_))
+    if (opcode == 0b1110011 && funct3 == 0b000)
     {
+        return;
+    }
+    if (rvv::IsVectorInstruction(current_instruction_))
+    {
+        // Vector loads read / stores write memory here, element by element; arithmetic has no
+        // memory phase.
+        rvv::VectorMemoryStage(vector_stage_, memory_controller_, current_delta_.memory_changes);
         return;
     }
 
@@ -1117,11 +1123,14 @@ void RVSSProcessor::WriteBackCsr()
 
 void RVSSProcessor::WriteBackVector()
 {
+    // Commit vd / loaded elements and the vector CSRs, then rd below.
+    vector_result_ = rvv::VectorWriteBackStage(vector_stage_, registers_,
+                                               current_delta_.register_changes);
     if (!vector_result_.writesRd)
     {
         return;
     }
-    // vset*: rd gets the new vl.
+    // rd: the new vl (vset*), or the scalar of vmv.x.s / vcpop.m / vfirst.m.
     uint8_t rd = (current_instruction_ >> 7) & 0b11111;
     uint64_t old_gpr = registers_.ReadGpr(rd);
     registers_.WriteGpr(rd, vector_result_.rdValue);
@@ -1406,6 +1415,7 @@ void RVSSProcessor::Reset()
     csr_write_val_ = 0;
     csr_uimm_ = 0;
     vector_result_ = rvv::VectorExecResult{};
+    vector_stage_ = rvv::VectorExStage{};
     current_delta_.register_changes.clear();
     current_delta_.memory_changes.clear();
     current_delta_.old_pc = 0;

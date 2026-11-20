@@ -11,6 +11,7 @@
 #include "processor/processor_base.h"
 #include "processor/registers.h"
 #include "processor/vector/vector_memory.h"
+#include "processor/vector/vector_stages.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -1019,20 +1020,11 @@ bool VectorInstructionWritesGpr(uint32_t instruction)
                     info->op == VectorArithOp::First);
 }
 
-VectorExecResult ExecuteVectorInstruction(uint32_t instruction, uint64_t rs1Value,
-                                          uint64_t rs2Value, RegisterFile &registers,
-                                          MemoryController &memory,
-                                          std::vector<RegisterChange> &changes,
-                                          std::vector<MemoryChange> &memoryChanges)
+VectorExecResult ExecuteVectorCompute(uint32_t instruction, uint64_t rs1Value, uint64_t rs2Value,
+                                      RegisterFile &registers,
+                                      std::vector<RegisterChange> &changes)
 {
     VectorExecResult result;
-    if (IsVectorMemoryInstruction(instruction))
-    {
-        // Vector loads/stores (LOAD-FP/STORE-FP with a vector width): see vector_memory.cpp.
-        ExecuteVectorMemory(instruction, rs1Value, rs2Value, registers, memory, changes,
-                            memoryChanges);
-        return result;
-    }
     if (DecodeVsetKind(instruction) != VsetKind::None)
     {
         const VsetResult vset = ExecuteVset(instruction, rs1Value, rs2Value, registers);
@@ -1063,6 +1055,21 @@ VectorExecResult ExecuteVectorInstruction(uint32_t instruction, uint64_t rs1Valu
         return result;
     }
     ThrowIllegal(instruction, "unsupported vector instruction");
+}
+
+VectorExecResult ExecuteVectorInstruction(uint32_t instruction, uint64_t rs1Value,
+                                          uint64_t rs2Value, RegisterFile &registers,
+                                          MemoryController &memory,
+                                          std::vector<RegisterChange> &changes,
+                                          std::vector<MemoryChange> &memoryChanges)
+{
+    // The three phases back to back: what the 5-stage VMs do in EX, and the reference the
+    // single-cycle VM's split EX / MEM / WB must match.
+    thread_local VectorScratch scratch;
+    VectorExStage stage =
+        VectorExecuteStage(instruction, rs1Value, rs2Value, registers, scratch);
+    VectorMemoryStage(stage, memory, memoryChanges);
+    return VectorWriteBackStage(stage, registers, changes);
 }
 
 VsetResult ExecuteVset(uint32_t instruction, uint64_t rs1Value, uint64_t rs2Value,

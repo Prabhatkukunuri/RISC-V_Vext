@@ -10,6 +10,7 @@
 #include "processor/processor_manager.h"
 #include "rvss_control_unit.h"
 #include "processor/vector/vector_execute.h"
+#include "processor/vector/vector_stages.h"
 
 #include <cstdint>
 #include <iostream>
@@ -49,6 +50,10 @@ class RVSSProcessor : public ProcessorBase
     uint8_t csr_uimm_{};
 
     // Vector (OP-V) intermediate variables
+    // A vector instruction's state between phases: ExecuteVector (EX) fills it, WriteMemory (MEM)
+    // does its memory accesses, WriteBackVector (WB) commits it.
+    rvv::VectorExStage vector_stage_{};
+    rvv::VectorScratch vector_scratch_; ///< private vector state EX computes into
     rvv::VectorExecResult vector_result_{};
 
     std::stack<StepDelta> undo_stack_;

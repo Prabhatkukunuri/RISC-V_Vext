@@ -475,16 +475,24 @@ std::string DisassembleVectorMem(uint32_t instruction)
 // Execution
 // ---------------------------------------------------------------------------------------------
 
-void ExecuteVectorMemory(uint32_t instruction, uint64_t rs1Value, uint64_t rs2Value,
-                         RegisterFile &registers, MemoryController &memory,
-                         std::vector<RegisterChange> &changes,
-                         std::vector<MemoryChange> &memoryChanges)
+// A vector load/store runs in three phases, matching the scalar EX / MEM / WB split:
+//   PlanVectorMemory      (EX)  legality checks, element addresses, store data from vs3
+//   AccessVectorMemory    (MEM) the element accesses themselves, in element order
+//   WriteBackVectorMemory (WB)  loaded elements into vd, a trimmed vl, vstart = 0
+
+VectorMemPlan PlanVectorMemory(uint32_t instruction, uint64_t rs1Value, uint64_t rs2Value,
+                               const RegisterFile &registers)
 {
     VectorMemFields fields;
     if (!DecodeVectorMem(instruction, fields))
     {
         ThrowIllegal(instruction, "reserved vector load/store encoding");
     }
+
+    VectorMemPlan plan;
+    plan.instruction = instruction;
+    plan.isStore = fields.isStore;
+    plan.mode = fields.mode;
 
     const uint32_t vd = (instruction >> 7) & 0x1F; // vs3 for stores
     const uint32_t vs2 = (instruction >> 20) & 0x1F;
@@ -571,15 +579,15 @@ void ExecuteVectorMemory(uint32_t instruction, uint64_t rs1Value, uint64_t rs2Va
         ThrowIllegal(instruction, "a masked load cannot write v0");
     }
 
-    const uint64_t elementBytes = dataEew / 8;
-    std::unique_ptr<DestinationRecorder> recorder;
-    if (!fields.isStore)
-    {
-        recorder = std::make_unique<DestinationRecorder>(registers, vd, totalRegs);
-    }
+    plan.dataEew = dataEew;
+    plan.vd = vd;
+    plan.fieldRegs = fieldRegs;
+    plan.segmentFields = segmentFields;
+    plan.totalRegs = totalRegs;
+    plan.vl = vl;
 
-    uint64_t newVl = vl;
-    std::array<uint64_t, 8> segment{};
+    // Address generation: one access per active element and field, in element order.
+    const uint64_t elementBytes = dataEew / 8;
     for (uint64_t i = vstart; i < evl; ++i)
     {
         if (masked && !registers.ReadMaskBit(0, i))
@@ -603,47 +611,99 @@ void ExecuteVectorMemory(uint32_t instruction, uint64_t rs1Value, uint64_t rs2Va
             break;
         }
 
-        try
+        for (uint32_t f = 0; f < segmentFields; ++f)
         {
+            VectorMemAccess access{i, f, base + f * elementBytes, 0};
             if (fields.isStore)
             {
-                for (uint32_t f = 0; f < segmentFields; ++f)
-                {
-                    const uint64_t value = registers.ReadVectorElement(vd + f * fieldRegs, i, dataEew);
-                    StoreElement(memory, base + f * elementBytes, dataEew, value, memoryChanges);
-                }
-                continue;
+                // Store data is read here, as scalar stores read rs2 before MEM.
+                access.storeValue = registers.ReadVectorElement(vd + f * fieldRegs, i, dataEew);
             }
-            // Read the whole segment first so a faulting segment leaves every field untouched.
-            for (uint32_t f = 0; f < segmentFields; ++f)
+            plan.accesses.push_back(access);
+        }
+    }
+    return plan;
+}
+
+VectorMemData AccessVectorMemory(const VectorMemPlan &plan, MemoryController &memory,
+                                 std::vector<MemoryChange> &memoryChanges)
+{
+    VectorMemData data;
+    data.newVl = plan.vl;
+    std::array<uint64_t, 8> segment{};
+    size_t next = 0;
+    while (next < plan.accesses.size())
+    {
+        // The accesses of one element (one per segment field) are consecutive.
+        const uint64_t element = plan.accesses[next].element;
+        const size_t fields = plan.segmentFields;
+        try
+        {
+            if (plan.isStore)
             {
-                segment[f] = LoadElement(memory, base + f * elementBytes, dataEew);
+                for (size_t f = 0; f < fields; ++f)
+                {
+                    const VectorMemAccess &access = plan.accesses[next + f];
+                    StoreElement(memory, access.address, plan.dataEew, access.storeValue,
+                                 memoryChanges);
+                }
+            }
+            else
+            {
+                // Read the whole segment first so a faulting segment leaves every field
+                // untouched.
+                for (size_t f = 0; f < fields; ++f)
+                {
+                    segment[f] = LoadElement(memory, plan.accesses[next + f].address,
+                                             plan.dataEew);
+                }
+                data.loadedValues.insert(data.loadedValues.end(), segment.begin(),
+                                         segment.begin() + static_cast<long>(fields));
             }
         }
         catch (const AccessFault &fault)
         {
-            if (fields.mode == VectorMemMode::FaultOnlyFirst && i != 0)
+            if (plan.mode == VectorMemMode::FaultOnlyFirst && element != 0)
             {
-                newVl = i; // trim vl to the faulting element instead of trapping
+                data.newVl = element; // trim vl to the faulting element instead of trapping
                 break;
             }
-            ThrowAccessFault(instruction, fields.isStore, i, fault);
+            ThrowAccessFault(plan.instruction, plan.isStore, element, fault);
         }
-        for (uint32_t f = 0; f < segmentFields; ++f)
-        {
-            registers.WriteVectorElement(vd + f * fieldRegs, i, dataEew, segment[f]);
-        }
+        next += fields;
     }
+    return data;
+}
 
-    if (recorder)
+void WriteBackVectorMemory(const VectorMemPlan &plan, const VectorMemData &data,
+                           RegisterFile &registers, std::vector<RegisterChange> &changes)
+{
+    if (!plan.isStore)
     {
-        recorder->Record(changes);
+        DestinationRecorder recorder(registers, plan.vd, plan.totalRegs);
+        for (size_t k = 0; k < data.loadedValues.size(); ++k)
+        {
+            const VectorMemAccess &access = plan.accesses[k];
+            registers.WriteVectorElement(plan.vd + access.field * plan.fieldRegs, access.element,
+                                         plan.dataEew, data.loadedValues[k]);
+        }
+        recorder.Record(changes);
     }
-    if (newVl != vl)
+    if (data.newVl != plan.vl)
     {
-        WriteCsrRecorded(registers, RegisterFile::CSR_VL, newVl, changes);
+        WriteCsrRecorded(registers, RegisterFile::CSR_VL, data.newVl, changes);
     }
     ClearVstart(registers, changes);
+}
+
+void ExecuteVectorMemory(uint32_t instruction, uint64_t rs1Value, uint64_t rs2Value,
+                         RegisterFile &registers, MemoryController &memory,
+                         std::vector<RegisterChange> &changes,
+                         std::vector<MemoryChange> &memoryChanges)
+{
+    const VectorMemPlan plan = PlanVectorMemory(instruction, rs1Value, rs2Value, registers);
+    const VectorMemData data = AccessVectorMemory(plan, memory, memoryChanges);
+    WriteBackVectorMemory(plan, data, registers, changes);
 }
 
 } // namespace Kites::rvv

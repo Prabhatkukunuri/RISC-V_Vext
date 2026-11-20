@@ -103,7 +103,75 @@ const std::vector<std::string> &VectorMemMnemonics();
 std::string DisassembleVectorMem(uint32_t instruction);
 
 /**
- * @brief Executes a vector load/store (any word IsVectorMemoryInstruction() accepts).
+ * @brief One element access of a vector load/store: field @p field of element @p element.
+ */
+struct VectorMemAccess
+{
+    uint64_t element = 0;
+    uint32_t field = 0;
+    uint64_t address = 0;
+    uint64_t storeValue = 0; ///< the vs3 element (stores only), read in EX
+};
+
+/**
+ * @brief The EX-phase result of a vector load/store: everything decided before memory is touched.
+ */
+struct VectorMemPlan
+{
+    uint32_t instruction = 0;
+    bool isStore = false;
+    VectorMemMode mode = VectorMemMode::UnitStride;
+    uint32_t dataEew = 8;      ///< width of each data element in bits
+    uint32_t vd = 0;           ///< vd (loads) or vs3 (stores)
+    size_t fieldRegs = 1;      ///< registers per segment field
+    uint32_t segmentFields = 1;
+    size_t totalRegs = 1;      ///< registers the destination group spans (loads)
+    uint64_t vl = 0;           ///< vl when the instruction executed
+    /// Active accesses in element order (fields of one element are consecutive); masked-off
+    /// elements have none.
+    std::vector<VectorMemAccess> accesses;
+};
+
+/**
+ * @brief The MEM-phase result of a vector load/store.
+ */
+struct VectorMemData
+{
+    /// One loaded value per access, for the first loadedValues.size() accesses (loads only).
+    std::vector<uint64_t> loadedValues;
+    uint64_t newVl = 0; ///< plan.vl, or less if a fault-only-first load trimmed it
+};
+
+/**
+ * @brief EX phase of a vector load/store: decodes it, checks it is legal, generates every element
+ * address and, for stores, reads the data from vs3. Changes no state.
+ *
+ * @throws std::runtime_error for an illegal instruction.
+ */
+VectorMemPlan PlanVectorMemory(uint32_t instruction, uint64_t rs1Value, uint64_t rs2Value,
+                               const RegisterFile &registers);
+
+/**
+ * @brief MEM phase of a vector load/store: performs the accesses of @p plan in order through the
+ * cache hierarchy. Stores write memory here (one MemoryChange per changed element); loads only
+ * collect the values. A fault-only-first load that faults past element 0 trims vl instead of
+ * trapping.
+ *
+ * @throws std::runtime_error for a memory access fault.
+ */
+VectorMemData AccessVectorMemory(const VectorMemPlan &plan, MemoryController &memory,
+                                 std::vector<MemoryChange> &memoryChanges);
+
+/**
+ * @brief WB phase of a vector load/store: writes the loaded elements into the destination group,
+ * a trimmed vl, and vstart = 0, appending a RegisterChange for each register that changed.
+ */
+void WriteBackVectorMemory(const VectorMemPlan &plan, const VectorMemData &data,
+                           RegisterFile &registers, std::vector<RegisterChange> &changes);
+
+/**
+ * @brief Executes a vector load/store (any word IsVectorMemoryInstruction() accepts): the three
+ * phases above, back to back.
  *
  * Elements are accessed in order, one memory access per element, through the cache hierarchy.
  * Tail and masked-off elements are left undisturbed (as Spike does). A fault-only-first load
