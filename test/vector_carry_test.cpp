@@ -175,6 +175,31 @@ TEST(VectorCarryTest, VectorVectorForms)
     EXPECT_EQ(maskByte(rf, 9), 0x04u);
 }
 
+TEST(VectorCarryTest, BorrowInAloneMakesTheDifferenceNegative)
+{
+    // Equal operands: x - x = 0, so only the borrow-in can make the result negative.
+    // v0 = 0b0101: borrow-in on elements 0 and 2. The mirror case for carries: x + (-1 - x) =
+    // 0xFF, which only overflows with the carry-in.
+    auto vm = runOn<Kites::RVSSProcessor>("vsetivli x0, 4, e8, m1, ta, ma\n"
+                                          "vmsbc.vvm v8, v2, v2, v0\n"
+                                          "vmsbc.vv v9, v2, v2\n"
+                                          "vsbc.vvm v10, v2, v2, v0\n"
+                                          "vmadc.vvm v11, v2, v3, v0\n"
+                                          "vmadc.vv v12, v2, v3\n",
+                                          [](RegisterFile &rf)
+                                          {
+                                              writeElements(rf, 0, 8, {0b0101});
+                                              writeElements(rf, 2, 8, {5, 5, 0x80, 0});
+                                              writeElements(rf, 3, 8, {0xFA, 0xFA, 0x7F, 0xFF});
+                                          });
+    const RegisterFile &rf = vm->registers_;
+    EXPECT_EQ(maskByte(rf, 8), 0x05u); // 5-5-1 and 0x80-0x80-1 borrow; no borrow-in, no borrow
+    EXPECT_EQ(maskByte(rf, 9), 0x00u); // without the borrow-in nothing borrows
+    EXPECT_EQ(readElements(rf, 10, 8, 4), (Elements{0xFF, 0x00, 0xFF, 0x00}));
+    EXPECT_EQ(maskByte(rf, 11), 0x05u); // 5+0xFA+1 and 0x80+0x7F+1 = 0x100 carry
+    EXPECT_EQ(maskByte(rf, 12), 0x00u); // 0xFF sums never carry on their own
+}
+
 TEST(VectorCarryTest, ScalarAndImmediateForms)
 {
     // The immediate -1 is 0xFF at e8 (sign-extended, then an unsigned SEW value).

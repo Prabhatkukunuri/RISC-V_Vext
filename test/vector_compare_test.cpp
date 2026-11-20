@@ -217,6 +217,42 @@ TEST(VectorCompareTest, EveryCompareSignedAndUnsigned)
     EXPECT_EQ(maskByte(rf, 5, 1), 0u);
 }
 
+TEST(VectorCompareTest, AllOnesScalarIsMaxUnsignedAndMinusOneSigned)
+{
+    // x10 = -1 (all 64 bits set). At e8 it acts as 0xFF: 255 unsigned, -1 signed.
+    // v2 = [0, 0x7F, 0x80, 0xFF] = unsigned [0, 127, 128, 255] = signed [0, 127, -128, -1].
+    auto vm = runOn<Kites::RVSSProcessor>("li x10, -1\n"
+                                          "vsetivli x0, 4, e8, m1, ta, ma\n"
+                                          "vmseq.vx  v4, v2, x10\n"
+                                          "vmsne.vx  v5, v2, x10\n"
+                                          "vmsltu.vx v6, v2, x10\n"
+                                          "vmslt.vx  v7, v2, x10\n"
+                                          "vmsleu.vx v8, v2, x10\n"
+                                          "vmsle.vx  v9, v2, x10\n"
+                                          "vmsgtu.vx v10, v2, x10\n"
+                                          "vmsgt.vx  v11, v2, x10\n"
+                                          "vsetivli x0, 2, e64, m1, ta, ma\n"
+                                          "vmseq.vx  v12, v3, x10\n"
+                                          "vmsltu.vx v13, v3, x10\n",
+                                          [](RegisterFile &rf)
+                                          {
+                                              writeElements(rf, 2, 8, {0x00, 0x7F, 0x80, 0xFF});
+                                              writeElements(rf, 3, 64, {~0ULL, 5});
+                                          });
+    const RegisterFile &rf = vm->registers_;
+    EXPECT_EQ(maskByte(rf, 4), 0x08u);  // == : only 0xFF
+    EXPECT_EQ(maskByte(rf, 5), 0x07u);  // !=
+    EXPECT_EQ(maskByte(rf, 6), 0x07u);  // <u 255: everything but 0xFF
+    EXPECT_EQ(maskByte(rf, 7), 0x04u);  // <s -1: only -128
+    EXPECT_EQ(maskByte(rf, 8), 0x0Fu);  // <=u 255: always
+    EXPECT_EQ(maskByte(rf, 9), 0x0Cu);  // <=s -1: -128 and -1
+    EXPECT_EQ(maskByte(rf, 10), 0x00u); // >u 255: never
+    EXPECT_EQ(maskByte(rf, 11), 0x03u); // >s -1: 0 and 127
+    // At e64 the scalar is used whole: 2^64 - 1.
+    EXPECT_EQ(maskByte(rf, 12), 0x01u);
+    EXPECT_EQ(maskByte(rf, 13), 0x02u);
+}
+
 TEST(VectorCompareTest, UnsignedImmediateIsSignExtendedThenUnsigned)
 {
     // -1 is 0xFF at e8 and 0xFFFFFFFFFFFFFFFF at e64; -2 is 0xFE / 0x...FE.

@@ -1,8 +1,5 @@
 // Tests for the RVV single-width integer add/subtract instructions:
 // vadd.vv/.vx/.vi, vsub.vv/.vx, vrsub.vx/.vi.
-// Encodings are checked against llvm-mc (-triple=riscv64 -mattr=+zve64x -show-encoding);
-// element behaviour follows RVV 1.0 section 11.1 and Spike (tail and masked-off elements are
-// left undisturbed).
 
 #include <gtest/gtest.h>
 

@@ -225,6 +225,33 @@ TEST(VectorMinMaxTest, SignedAndUnsigned)
     EXPECT_EQ(readElements(rf, 11, 8, 8), (Elements{0, 1, 5, 0x7F, 0xFF, 0xFF, 5, 6}));
 }
 
+TEST(VectorMinMaxTest, MaskedOffAndTailElementsKeepTheirOldValues)
+{
+    // vl = 3 of VLMAX 16; v0 = 0b0101 enables elements 0 and 2. Every destination starts as 0x5A,
+    // so element 1 (masked off) and element 3 (tail) must visibly keep it.
+    auto vm = runOn<Kites::RVSSProcessor>("li x10, -1\n"
+                                          "vsetivli x0, 3, e8, m1, ta, ma\n"
+                                          "vminu.vv v4, v2, v3, v0.t\n"
+                                          "vmin.vx  v5, v2, x10, v0.t\n"
+                                          "vmaxu.vv v6, v2, v3, v0.t\n"
+                                          "vmax.vx  v7, v2, x10, v0.t\n",
+                                          [](RegisterFile &rf)
+                                          {
+                                              writeElements(rf, 0, 8, {0b0101});
+                                              writeElements(rf, 2, 8, {0x7F, 1, 0x80, 2});
+                                              writeElements(rf, 3, 8, {0x80, 3, 0x7F, 4});
+                                              for (size_t r = 4; r <= 7; ++r)
+                                              {
+                                                  writeElements(rf, r, 8, Elements(4, 0x5A));
+                                              }
+                                          });
+    const RegisterFile &rf = vm->registers_;
+    EXPECT_EQ(readElements(rf, 4, 8, 4), (Elements{0x7F, 0x5A, 0x7F, 0x5A})); // unsigned min
+    EXPECT_EQ(readElements(rf, 5, 8, 4), (Elements{0xFF, 0x5A, 0x80, 0x5A})); // signed min vs -1
+    EXPECT_EQ(readElements(rf, 6, 8, 4), (Elements{0x80, 0x5A, 0x80, 0x5A})); // unsigned max
+    EXPECT_EQ(readElements(rf, 7, 8, 4), (Elements{0x7F, 0x5A, 0xFF, 0x5A})); // signed max vs -1
+}
+
 TEST(VectorMultiplyTest, LowAndHighHalvesAtE8)
 {
     auto vm = runOn<Kites::RVSSProcessor>("vsetivli x0, 4, e8, m1, ta, ma\n"
@@ -242,6 +269,37 @@ TEST(VectorMultiplyTest, LowAndHighHalvesAtE8)
     EXPECT_EQ(readElements(rf, 5, 8, 4), (Elements{0x00, 0x40, 0x00, 0x00})); // -128*-128, -1*-1
     EXPECT_EQ(readElements(rf, 6, 8, 4), (Elements{0x00, 0x40, 0xFE, 0x00})); // 255*255 = 0xFE01
     EXPECT_EQ(readElements(rf, 7, 8, 4), (Elements{0x00, 0xC0, 0xFF, 0x00})); // -128*128, -1*255
+}
+
+TEST(VectorMultiplyTest, MaskedOffAndTailElementsKeepTheirOldValues)
+{
+    // vl = 3 of VLMAX 16; v0 = 0b0101 enables elements 0 and 2. Every destination starts as 0x5A,
+    // so element 1 (masked off) and element 3 (tail) must visibly keep it. x10 = -1 is 0xFF.
+    auto vm = runOn<Kites::RVSSProcessor>("li x10, -1\n"
+                                          "vsetivli x0, 3, e8, m1, ta, ma\n"
+                                          "vmul.vv    v4, v2, v3, v0.t\n"
+                                          "vmulh.vv   v5, v2, v3, v0.t\n"
+                                          "vmulhu.vx  v6, v2, x10, v0.t\n"
+                                          "vmulhsu.vx v7, v2, x10, v0.t\n",
+                                          [](RegisterFile &rf)
+                                          {
+                                              writeElements(rf, 0, 8, {0b0101});
+                                              writeElements(rf, 2, 8, {0x80, 1, 0xFF, 2});
+                                              writeElements(rf, 3, 8, {0x80, 3, 0xFF, 4});
+                                              for (size_t r = 4; r <= 7; ++r)
+                                              {
+                                                  writeElements(rf, r, 8, Elements(4, 0x5A));
+                                              }
+                                          });
+    const RegisterFile &rf = vm->registers_;
+    // 0x80 x 0x80 = 0x4000, 0xFF x 0xFF = 0xFE01: low halves
+    EXPECT_EQ(readElements(rf, 4, 8, 4), (Elements{0x00, 0x5A, 0x01, 0x5A}));
+    // signed: -128 x -128 = 0x4000, -1 x -1 = 0x0001: high halves
+    EXPECT_EQ(readElements(rf, 5, 8, 4), (Elements{0x40, 0x5A, 0x00, 0x5A}));
+    // unsigned: 128 x 255 = 0x7F80, 255 x 255 = 0xFE01
+    EXPECT_EQ(readElements(rf, 6, 8, 4), (Elements{0x7F, 0x5A, 0xFE, 0x5A}));
+    // signed x unsigned: -128 x 255 = 0x8080, -1 x 255 = 0xFF01
+    EXPECT_EQ(readElements(rf, 7, 8, 4), (Elements{0x80, 0x5A, 0xFF, 0x5A}));
 }
 
 TEST(VectorMultiplyTest, HighHalfAtE64Uses128BitProducts)
@@ -286,6 +344,34 @@ TEST(VectorDivideTest, EdgeCasesMatchTheScalarMExtension)
     EXPECT_EQ(readElements(rf, 7, 8, 5), (Elements{1, 0x80, 1, 9, 0x80}));
 }
 
+TEST(VectorDivideTest, MaskedOffAndTailElementsKeepTheirOldValues)
+{
+    // vl = 3 of VLMAX 16; v0 = 0b0101 enables elements 0 and 2. Every destination starts as 0x5A,
+    // so element 1 (masked off) and element 3 (tail) must visibly keep it. Element 0 divides by
+    // zero (.vv) or is MIN / -1 (.vx, x10 = -1).
+    auto vm = runOn<Kites::RVSSProcessor>("li x10, -1\n"
+                                          "vsetivli x0, 3, e8, m1, ta, ma\n"
+                                          "vdivu.vv v4, v2, v3, v0.t\n"
+                                          "vdiv.vx  v5, v2, x10, v0.t\n"
+                                          "vremu.vv v6, v2, v3, v0.t\n"
+                                          "vrem.vx  v7, v2, x10, v0.t\n",
+                                          [](RegisterFile &rf)
+                                          {
+                                              writeElements(rf, 0, 8, {0b0101});
+                                              writeElements(rf, 2, 8, {0x80, 1, 0xF9, 2});
+                                              writeElements(rf, 3, 8, {0, 3, 2, 4});
+                                              for (size_t r = 4; r <= 7; ++r)
+                                              {
+                                                  writeElements(rf, r, 8, Elements(4, 0x5A));
+                                              }
+                                          });
+    const RegisterFile &rf = vm->registers_;
+    EXPECT_EQ(readElements(rf, 4, 8, 4), (Elements{0xFF, 0x5A, 0x7C, 0x5A})); // 128/0, 249/2
+    EXPECT_EQ(readElements(rf, 5, 8, 4), (Elements{0x80, 0x5A, 0x07, 0x5A})); // -128/-1, -7/-1
+    EXPECT_EQ(readElements(rf, 6, 8, 4), (Elements{0x80, 0x5A, 0x01, 0x5A})); // 128%0, 249%2
+    EXPECT_EQ(readElements(rf, 7, 8, 4), (Elements{0x00, 0x5A, 0x00, 0x5A})); // -128%-1, -7%-1
+}
+
 TEST(VectorDivideTest, SignedOverflowAtE64)
 {
     auto vm = runOn<Kites::RVSSProcessor>("li x10, -1\n"
@@ -315,6 +401,35 @@ TEST(VectorMultiplyTest, WideningMultiplySignedness)
     EXPECT_EQ(readElements(rf, 8, 16, 3), (Elements{0xFF01, 0xFF00, 0x02FA}));
 }
 
+TEST(VectorMultiplyTest, WideningMaskedOffAndTailElementsKeepTheirOldValues)
+{
+    // e8 sources, e16 results. vl = 3; v0 = 0b0101 enables elements 0 and 2. Every 16-bit
+    // destination element starts as 0x5A5A, so element 1 (masked off) and element 3 (tail)
+    // must visibly keep it. x10 = -1 is 0xFF.
+    auto vm = runOn<Kites::RVSSProcessor>("li x10, -1\n"
+                                          "vsetivli x0, 3, e8, m1, ta, ma\n"
+                                          "vwmul.vv   v4, v2, v3, v0.t\n"
+                                          "vwmulu.vx  v6, v2, x10, v0.t\n"
+                                          "vwmulsu.vv v8, v2, v3, v0.t\n",
+                                          [](RegisterFile &rf)
+                                          {
+                                              writeElements(rf, 0, 8, {0b0101});
+                                              writeElements(rf, 2, 8, {0xFF, 1, 0x80, 2});
+                                              writeElements(rf, 3, 8, {0xFF, 3, 2, 4});
+                                              for (size_t r = 4; r <= 8; r += 2)
+                                              {
+                                                  writeElements(rf, r, 16, Elements(4, 0x5A5A));
+                                              }
+                                          });
+    const RegisterFile &rf = vm->registers_;
+    // signed: -1 x -1 = 1, -128 x 2 = -256
+    EXPECT_EQ(readElements(rf, 4, 16, 4), (Elements{0x0001, 0x5A5A, 0xFF00, 0x5A5A}));
+    // unsigned: 255 x 255 = 0xFE01, 128 x 255 = 0x7F80
+    EXPECT_EQ(readElements(rf, 6, 16, 4), (Elements{0xFE01, 0x5A5A, 0x7F80, 0x5A5A}));
+    // signed vs2 x unsigned vs1: -1 x 255 = -255, -128 x 2 = -256
+    EXPECT_EQ(readElements(rf, 8, 16, 4), (Elements{0xFF01, 0x5A5A, 0xFF00, 0x5A5A}));
+}
+
 TEST(VectorMultiplyAddTest, SingleWidthForms)
 {
     // vs1 = v2 [3, -1, 2], vs2 = v3 [4, 5, 128]; each destination starts as [10, 10, 10].
@@ -340,6 +455,34 @@ TEST(VectorMultiplyAddTest, SingleWidthForms)
     EXPECT_EQ(readElements(rf, 6, 8, 3), (Elements{34, 0xFB, 0x94})); // vs1*vd + vs2
     EXPECT_EQ(readElements(rf, 7, 8, 3), (Elements{0xE6, 15, 0x6C})); // vs2 - vs1*vd
     EXPECT_EQ(readElements(rf, 8, 8, 3), (Elements{18, 20, 10}));
+}
+
+TEST(VectorMultiplyAddTest, MaskedOffAndTailElementsAreNotComputed)
+{
+    // vl = 3; v0 = 0b0101 enables elements 0 and 2. Every vd starts as 10. Elements 1 (masked
+    // off) and 3 (tail) would change if they were computed, so they must stay exactly 10.
+    // vs1 = v2 [3, 7, -1, 9], vs2 = v3 [4, 6, 5, 8], x10 = 2.
+    auto vm = runOn<Kites::RVSSProcessor>("li x10, 2\n"
+                                          "vsetivli x0, 3, e8, m1, ta, ma\n"
+                                          "vmacc.vv  v4, v2, v3, v0.t\n"
+                                          "vnmsac.vx v5, x10, v3, v0.t\n"
+                                          "vmadd.vv  v6, v2, v3, v0.t\n"
+                                          "vnmsub.vx v7, x10, v3, v0.t\n",
+                                          [](RegisterFile &rf)
+                                          {
+                                              writeElements(rf, 0, 8, {0b0101});
+                                              writeElements(rf, 2, 8, {3, 7, 0xFF, 9});
+                                              writeElements(rf, 3, 8, {4, 6, 5, 8});
+                                              for (size_t r = 4; r <= 7; ++r)
+                                              {
+                                                  writeElements(rf, r, 8, Elements(4, 10));
+                                              }
+                                          });
+    const RegisterFile &rf = vm->registers_;
+    EXPECT_EQ(readElements(rf, 4, 8, 4), (Elements{22, 10, 5, 10}));     // vd + vs1*vs2
+    EXPECT_EQ(readElements(rf, 5, 8, 4), (Elements{2, 10, 0, 10}));      // vd - 2*vs2
+    EXPECT_EQ(readElements(rf, 6, 8, 4), (Elements{34, 10, 0xFB, 10}));  // vs1*vd + vs2
+    EXPECT_EQ(readElements(rf, 7, 8, 4), (Elements{0xF0, 10, 0xF1, 10})); // vs2 - 2*vd
 }
 
 TEST(VectorMultiplyAddTest, WideningFormsAndSignedness)
@@ -418,6 +561,38 @@ TEST(VectorMergeMoveTest, MoveWithNonZeroVs2IsReservedAndUndoWorks)
                                                       vm->registers_, vm->memory_controller_,
                                                       changes, memoryChanges),
                  std::runtime_error);
+}
+
+TEST(VectorMultiplyAddTest, WideningMaskedOffAndTailElementsAreNotComputed)
+{
+    // e8 sources, e16 accumulators all starting at 1000. vl = 3; v0 = 0b0101 enables elements 0
+    // and 2. Elements 1 (masked off) and 3 (tail) would change if computed, so they must stay
+    // 1000. vs1 = v2 [0xFF, 7, 0x80, 9], vs2 = v3 [0xFF, 6, 3, 8], x10 = -1 (0xFF).
+    auto vm = runOn<Kites::RVSSProcessor>("li x10, -1\n"
+                                          "vsetivli x0, 3, e8, m1, ta, ma\n"
+                                          "vwmaccu.vv  v4, v2, v3, v0.t\n"
+                                          "vwmacc.vx   v6, x10, v3, v0.t\n"
+                                          "vwmaccsu.vv v8, v2, v3, v0.t\n"
+                                          "vwmaccus.vx v10, x10, v3, v0.t\n",
+                                          [](RegisterFile &rf)
+                                          {
+                                              writeElements(rf, 0, 8, {0b0101});
+                                              writeElements(rf, 2, 8, {0xFF, 7, 0x80, 9});
+                                              writeElements(rf, 3, 8, {0xFF, 6, 3, 8});
+                                              for (size_t r = 4; r <= 10; r += 2)
+                                              {
+                                                  writeElements(rf, r, 16, Elements(4, 1000));
+                                              }
+                                          });
+    const RegisterFile &rf = vm->registers_;
+    // unsigned x unsigned: 1000 + 255*255 wraps to 489; 1000 + 128*3
+    EXPECT_EQ(readElements(rf, 4, 16, 4), (Elements{489, 1000, 1384, 1000}));
+    // signed -1 x signed vs2: 1000 + 1; 1000 - 3
+    EXPECT_EQ(readElements(rf, 6, 16, 4), (Elements{1001, 1000, 997, 1000}));
+    // signed vs1 x unsigned vs2: 1000 - 255; 1000 - 384
+    EXPECT_EQ(readElements(rf, 8, 16, 4), (Elements{745, 1000, 616, 1000}));
+    // unsigned 255 x signed vs2: 1000 - 255; 1000 + 765
+    EXPECT_EQ(readElements(rf, 10, 16, 4), (Elements{745, 1000, 1765, 1000}));
 }
 
 TEST(VectorMultiplyAddTest, IllegalWideningConfigurationsTrap)

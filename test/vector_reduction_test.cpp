@@ -171,6 +171,25 @@ TEST(VectorReductionTest, EveryOperationSignedAndUnsigned)
     EXPECT_EQ(readElements(rf, 17, 8, 4), (Elements{0x7F, 0x99, 0x99, 0x99}));
 }
 
+TEST(VectorReductionTest, AllOnesVs1ForMax)
+{
+    // vs1[0] = 0xFF: the largest unsigned value, but -1 signed.
+    // v2 = [0xF1, 0xF3, 0x7F, 0xF5] has a positive element (127); v5 is all negative.
+    auto vm = runOn<Kites::RVSSProcessor>("vsetivli x0, 4, e8, m1, ta, ma\n"
+                                          "vredmaxu.vs v10, v2, v4\n"
+                                          "vredmax.vs  v11, v2, v4\n"
+                                          "vredmax.vs  v12, v5, v4\n",
+                                          [](RegisterFile &rf)
+                                          {
+                                              reductionData(rf);
+                                              writeElements(rf, 5, 8, {0xF1, 0xF3, 0x80, 0xF5});
+                                          });
+    const RegisterFile &rf = vm->registers_;
+    EXPECT_EQ(readElements(rf, 10, 8, 1), (Elements{0xFF})); // 255 beats every element
+    EXPECT_EQ(readElements(rf, 11, 8, 1), (Elements{0x7F})); // -1 loses to 127
+    EXPECT_EQ(readElements(rf, 12, 8, 1), (Elements{0xFF})); // -1 beats all-negative elements
+}
+
 TEST(VectorReductionTest, MaskedOffElementsAreLeftOut)
 {
     auto vm = runOn<Kites::RVSSProcessor>("vsetivli x0, 4, e8, m1, ta, ma\n"

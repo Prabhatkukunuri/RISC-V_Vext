@@ -260,18 +260,23 @@ TEST(VectorMaskTest, SetBeforeIncludingOnlyFirst)
                                           "vmsif.m v11, v3\n"
                                           "vmsof.m v12, v3\n"
                                           "vmsbf.m v13, v4\n"         // no set bit at all
+                                          "vmsif.m v15, v4\n"
+                                          "vmsof.m v16, v4\n"
                                           "vmsbf.m v14, v3, v0.t\n",  // spec example
                                           [](RegisterFile &rf)
                                           {
                                               writeElements(rf, 3, 8, {0x94}); // 1001 0100
                                               writeElements(rf, 0, 8, {0xC3}); // 1100 0011
                                               writeElements(rf, 14, 8, {0x3C});
+                                              writeElements(rf, 16, 8, {0xAA}); // must be cleared
                                           });
     const RegisterFile &rf = vm->registers_;
     EXPECT_EQ(maskByte(rf, 10), 0x03u);
     EXPECT_EQ(maskByte(rf, 11), 0x07u);
     EXPECT_EQ(maskByte(rf, 12), 0x04u);
-    EXPECT_EQ(maskByte(rf, 13), 0xFFu);
+    EXPECT_EQ(maskByte(rf, 13), 0xFFu); // no set bit: everything is "before the first"
+    EXPECT_EQ(maskByte(rf, 15), 0xFFu); // ... and "up to and including" it
+    EXPECT_EQ(maskByte(rf, 16), 0x00u); // ... but there is no "only first" bit
     // Active elements 0, 1, 6, 7 give 1, 1, 1, 0; elements 2..5 keep 0x3C's bits.
     EXPECT_EQ(maskByte(rf, 14), 0x7Fu);
 }

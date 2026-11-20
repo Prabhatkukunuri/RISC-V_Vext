@@ -415,6 +415,31 @@ TEST(VectorLogicalTest, AllFormsAtSew32)
     EXPECT_EQ(readElements(rf, 11, 32, 2), (Elements{0xEDCBA987, 0x0F0F0F0F})); // vnot
 }
 
+TEST(VectorLogicalTest, MaskedOffAndTailElementsKeepTheirOldValues)
+{
+    // vl = 3 of VLMAX 4; v0 = 0b0101 enables elements 0 and 2. Every destination starts as
+    // 0x5A5A5A5A, so element 1 (masked off) and element 3 (tail) must visibly keep it.
+    auto vm = runOn<Kites::RVSSProcessor>("li x10, 0xFF\n"
+                                          "vsetivli x0, 3, e32, m1, ta, ma\n"
+                                          "vand.vv v4, v2, v3, v0.t\n"
+                                          "vor.vx v5, v2, x10, v0.t\n"
+                                          "vxor.vi v6, v2, -1, v0.t\n",
+                                          [](RegisterFile &rf)
+                                          {
+                                              writeElements(rf, 0, 8, {0b0101});
+                                              writeElements(rf, 2, 32, {0xF0F0F0F0, 1, 0x12345678, 2});
+                                              writeElements(rf, 3, 32, {0x0F0F0FFF, 3, 0x0000FFFF, 4});
+                                              for (size_t r = 4; r <= 6; ++r)
+                                              {
+                                                  writeElements(rf, r, 32, Elements(4, 0x5A5A5A5A));
+                                              }
+                                          });
+    const RegisterFile &rf = vm->registers_;
+    EXPECT_EQ(readElements(rf, 4, 32, 4), (Elements{0x000000F0, 0x5A5A5A5A, 0x00005678, 0x5A5A5A5A}));
+    EXPECT_EQ(readElements(rf, 5, 32, 4), (Elements{0xF0F0F0FF, 0x5A5A5A5A, 0x123456FF, 0x5A5A5A5A}));
+    EXPECT_EQ(readElements(rf, 6, 32, 4), (Elements{0x0F0F0F0F, 0x5A5A5A5A, 0xEDCBA987, 0x5A5A5A5A}));
+}
+
 TEST(VectorLogicalTest, ScalarAndImmediateFollowSew)
 {
     // At e8, x10 = 0x1F0 acts as 0xF0 and -16 as 0xF0.
