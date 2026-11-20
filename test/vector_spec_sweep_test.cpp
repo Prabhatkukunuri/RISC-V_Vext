@@ -14,11 +14,14 @@
 #include <functional>
 #include <memory>
 #include <random>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "assembler/assembler.h"
+#include "common/instructions.h"
+#include "processor/vector/vector_config.h"
 #include "processor/registers.h"
 #include "processor/rvss/rvss_processor.h"
 #include "utils/utils.h"
@@ -785,4 +788,39 @@ TEST(VectorSpecRulesTest, MaskedSetFirstVariants)
     EXPECT_EQ(vm.registers_.ReadVectorElement(8, 0, 8), 0x0Bu | 0x24u);
     EXPECT_EQ(vm.registers_.ReadVectorElement(9, 0, 8), 0x1Bu | 0x24u);
     EXPECT_EQ(vm.registers_.ReadVectorElement(10, 0, 8), 0x10u | 0x24u);
+}
+
+// parseVectorArith rejects a mnemonic with no rvv::kVectorArith row ("Unsupported vector
+// instruction"). This catches the mistake earlier: every mnemonic the syntax map routes there must
+// either have a row or be one of the aliases/pseudos the parser rewrites to one.
+TEST(VectorSpecRulesTest, EveryArithMnemonicHasADecodeRow)
+{
+    using Kites::instruction_set::SyntaxType;
+    const std::set<SyntaxType> arithSyntaxes = {
+        SyntaxType::O_VR_C_VR_C_VR,      SyntaxType::O_VR_C_VR_C_GPR,
+        SyntaxType::O_VR_C_VR_C_I,       SyntaxType::O_VR_C_VR,
+        SyntaxType::O_VR_C_GPR_C_VR,     SyntaxType::O_VR_C_VR_C_VR_C_V0,
+        SyntaxType::O_VR_C_VR_C_GPR_C_V0, SyntaxType::O_VR_C_VR_C_I_C_V0,
+        SyntaxType::O_VR_C_GPR,          SyntaxType::O_VR_C_I,
+        SyntaxType::O_GPR_C_VR,          SyntaxType::O_VR};
+    const std::set<std::string> rewritten = {
+        "vmsgt.vv", "vmsgtu.vv", "vmsge.vv", "vmsgeu.vv", "vmsge.vi", "vmsgeu.vi",
+        "vmslt.vi", "vmsltu.vi", "vmmv.m",   "vmnot.m",   "vmclr.m",  "vmset.m"};
+    size_t checked = 0;
+    for (const auto &[mnemonic, syntaxes] : Kites::instruction_set::instruction_syntax_map)
+    {
+        bool routed = false;
+        for (SyntaxType syntax : syntaxes)
+        {
+            routed = routed || arithSyntaxes.count(syntax) != 0;
+        }
+        if (!routed)
+        {
+            continue;
+        }
+        ++checked;
+        EXPECT_TRUE(Kites::rvv::FindVectorArith(mnemonic) != nullptr || rewritten.count(mnemonic))
+            << mnemonic << " reaches parseVectorArith but has no kVectorArith row";
+    }
+    EXPECT_GT(checked, 150u);
 }

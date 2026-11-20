@@ -286,7 +286,21 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
                          : maskPseudo ? maskPseudo->target
                                       : currentToken().value;
     const rvv::VectorArithInfo *opInfo = rvv::FindVectorArith(opcode);
-    const rvv::VectorArithOp op = opInfo ? opInfo->op : rvv::VectorArithOp::Add;
+    if (!opInfo)
+    {
+        // The syntax map routed this mnemonic here, but kVectorArith (vector_config.cpp) has no
+        // row for it, so it could be neither laid out nor decoded. Fail now rather than at run
+        // time.
+        const Token &at = currentToken();
+        const std::string detail = "'" + opcode + "' has no entry in rvv::kVectorArith";
+        recordError(ParseError(at.line_number, "Unsupported vector instruction: " + detail));
+        errors_.all_errors.emplace_back(errors::SyntaxError(
+            "Unsupported vector instruction", detail, filename_, at.line_number, at.column_number,
+            GetLineFromFile(filename_, at.line_number)));
+        skipCurrentLine();
+        return true; // error recorded
+    }
+    const rvv::VectorArithOp op = opInfo->op;
 
     // The operand layout depends on the instruction:
     //   most                vd, vs2[, source][, v0.t]
@@ -336,7 +350,7 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
         sourceAt = 1;
         maskOperand = MaskOperand::None;
     }
-    else if (opInfo && rvv::HasSourceFirstSyntax(*opInfo) && sourceType)
+    else if (rvv::HasSourceFirstSyntax(*opInfo) && sourceType)
     {
         operands.push_back(*sourceType);
         operands.push_back(TokenType::VEC_REGISTER);
@@ -352,11 +366,11 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
             operands.push_back(*sourceType);
             sourceAt = 2;
         }
-        if (opInfo && opInfo->vmField == 0)
+        if (opInfo->vmField == 0)
         {
             maskOperand = MaskOperand::Required;
         }
-        else if (opInfo && opInfo->vmField == 1)
+        else if (opInfo->vmField == 1)
         {
             maskOperand = MaskOperand::None;
         }
@@ -421,52 +435,49 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
         sourceAt < 0 ? std::nullopt : std::optional<TokenType>(operands[sourceAt]);
     // Compares write a mask, which may go to v0 even under v0.t; reductions write only vd[0]
     // and may overlap any source, the mask register included.
-    const bool isCompare = opInfo && opInfo->shape == rvv::VectorOpShape::Compare;
-    const bool isReduction = opInfo && (opInfo->shape == rvv::VectorOpShape::Reduction ||
-                                        opInfo->shape == rvv::VectorOpShape::WideningReduction);
+    const bool isCompare = opInfo->shape == rvv::VectorOpShape::Compare;
+    const bool isReduction = (opInfo->shape == rvv::VectorOpShape::Reduction ||
+                             opInfo->shape == rvv::VectorOpShape::WideningReduction);
     if (masked && vd.value == "v0" && !isCompare && !isReduction)
     {
         return reject(vd, "Destination overlaps the mask register",
-                      opInfo && opInfo->vmField == 0
+                      opInfo->vmField == 0
                           ? "This instruction reads v0 as an operand, so it cannot write v0"
                           : "A masked instruction (v0.t) cannot write v0");
     }
 
     // Overlaps that are illegal at every LMUL: the destination can't start on a source with a
     // narrower element width. (Overlaps that depend on LMUL are checked when it runs.)
-    if (opInfo)
+    const bool narrowVs2 = opInfo->shape == rvv::VectorOpShape::Widening ||
+                           opInfo->shape == rvv::VectorOpShape::Extension;
+    const bool narrowVs1 = (opInfo->shape == rvv::VectorOpShape::Widening ||
+                            opInfo->shape == rvv::VectorOpShape::WideningW) &&
+                           sourceKind == TokenType::VEC_REGISTER;
+    if ((narrowVs2 && vd.value == vs2) || (narrowVs1 && vd.value == source.value))
     {
-        const bool narrowVs2 = opInfo->shape == rvv::VectorOpShape::Widening ||
-                               opInfo->shape == rvv::VectorOpShape::Extension;
-        const bool narrowVs1 = (opInfo->shape == rvv::VectorOpShape::Widening ||
-                                opInfo->shape == rvv::VectorOpShape::WideningW) &&
-                               sourceKind == TokenType::VEC_REGISTER;
-        if ((narrowVs2 && vd.value == vs2) || (narrowVs1 && vd.value == source.value))
-        {
-            return reject(vd, "Destination overlaps a source",
-                          "vd cannot be the same register as a source with a narrower element "
-                          "width");
-        }
-        // Section 16: slide-ups, vrgather and vcompress may not overlap their sources at all;
-        // section 15: nor may vmsbf/vmsif/vmsof and viota overlap their source mask.
-        const bool noVs2Overlap = op == rvv::VectorArithOp::Sbf || op == rvv::VectorArithOp::Sif ||
-                                  op == rvv::VectorArithOp::Sof ||
-                                  op == rvv::VectorArithOp::Iota ||
-                                  op == rvv::VectorArithOp::SlideUp ||
-                                  op == rvv::VectorArithOp::Slide1Up ||
-                                  op == rvv::VectorArithOp::Gather ||
-                                  op == rvv::VectorArithOp::GatherEi16 ||
-                                  op == rvv::VectorArithOp::Compress;
-        const bool noVs1Overlap = (op == rvv::VectorArithOp::Gather ||
-                                   op == rvv::VectorArithOp::GatherEi16 ||
-                                   op == rvv::VectorArithOp::Compress) &&
-                                  sourceKind == TokenType::VEC_REGISTER;
-        if ((noVs2Overlap && vd.value == vs2) || (noVs1Overlap && vd.value == source.value))
-        {
-            return reject(vd, "Destination overlaps a source",
-                          "For vmsbf/vmsif/vmsof, viota, slide-ups, vrgather and vcompress, vd "
-                          "must not overlap a source");
-        }
+        return reject(vd, "Destination overlaps a source",
+                      "vd cannot be the same register as a source with a narrower element "
+                      "width");
+    }
+    // Section 16: slide-ups, vrgather and vcompress may not overlap their sources at all;
+    // section 15: nor may vmsbf/vmsif/vmsof and viota overlap their source mask.
+    const bool noVs2Overlap = op == rvv::VectorArithOp::Sbf || op == rvv::VectorArithOp::Sif ||
+                              op == rvv::VectorArithOp::Sof ||
+                              op == rvv::VectorArithOp::Iota ||
+                              op == rvv::VectorArithOp::SlideUp ||
+                              op == rvv::VectorArithOp::Slide1Up ||
+                              op == rvv::VectorArithOp::Gather ||
+                              op == rvv::VectorArithOp::GatherEi16 ||
+                              op == rvv::VectorArithOp::Compress;
+    const bool noVs1Overlap = (op == rvv::VectorArithOp::Gather ||
+                               op == rvv::VectorArithOp::GatherEi16 ||
+                               op == rvv::VectorArithOp::Compress) &&
+                              sourceKind == TokenType::VEC_REGISTER;
+    if ((noVs2Overlap && vd.value == vs2) || (noVs1Overlap && vd.value == source.value))
+    {
+        return reject(vd, "Destination overlaps a source",
+                      "For vmsbf/vmsif/vmsof, viota, slide-ups, vrgather and vcompress, vd "
+                      "must not overlap a source");
     }
 
     ICUnit block;
@@ -487,7 +498,7 @@ bool Parser::parseVectorArith(std::optional<TokenType> sourceType)
     {
         // Shifts take an unsigned uimm (0..31), the decrementing compare aliases -15..16 and
         // everything else a signed simm5 (-16..15).
-        const bool isUnsigned = opInfo && rvv::HasUnsignedImmediate(*opInfo);
+        const bool isUnsigned = rvv::HasUnsignedImmediate(*opInfo);
         const bool decrement = alias && alias->decrementImm;
         const int64_t low = isUnsigned ? 0 : decrement ? -15 : -16;
         const int64_t high = isUnsigned ? 31 : decrement ? 16 : 15;
