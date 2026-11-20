@@ -24,3 +24,4 @@ gtest_filter.
 .vs/
 gtest_filter.py
 build-gui/
+report/
