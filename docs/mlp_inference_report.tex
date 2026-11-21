@@ -1,0 +1,458 @@
+% MLP inference on the Kites RISC-V simulator: C code (vectorised part highlighted), scalar and
+% vector RISC-V assembly, and their comparison. One inference with fixed, pre-trained weights.
+% Self-contained: compile with  pdflatex mlp_inference_report.tex
+% Files: benchmarks/mlp/ (mlp.c, mlp_weights.h, mlp_scalar.s, mlp_vector.s, verify_mlp.py)
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{float}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\captionsetup{font=small,labelfont=bf}
+
+\definecolor{cmt}{RGB}{110,110,104}
+\definecolor{kw}{RGB}{30,90,170}
+\definecolor{vec}{RGB}{190,40,40}
+\lstdefinestyle{asm}{
+  basicstyle=\ttfamily\footnotesize,
+  commentstyle=\color{cmt}\itshape,
+  morecomment=[l]{\#},
+  alsoletter={.},
+  keywordstyle=\color{vec}\bfseries,
+  morekeywords={vsetvli,vsetivli,vle32.v,vse32.v,vmacc.vx,vmax.vx,vsra.vi,vredmax.vs,vmseq.vx,
+                vfirst.m,vmv.s.x,vmv.x.s},
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{black!25},
+  xleftmargin=1em,
+  framexleftmargin=0.8em
+}
+\lstdefinestyle{c}{
+  language=C,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{kw}\bfseries,
+  commentstyle=\color{cmt}\itshape,
+  morekeywords={int32_t},
+  moredelim=**[is][\color{vec}\bfseries]{@}{@},
+  numbers=left,
+  numberstyle=\tiny\color{cmt},
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{black!25},
+  xleftmargin=2em,
+  framexleftmargin=0.8em
+}
+
+\title{MLP Inference on Kites:\\ Scalar vs.\ Vector Instructions}
+\author{RISC-V Vector Extension (RVV 1.0) project}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+%==============================================================================================
+\section{Introduction}
+%==============================================================================================
+
+The inference step of a neural network is a good real-world test for a vector unit. Almost all of
+its work is multiply-accumulate (MAC) operations, and the neurons of a layer are independent of
+each other, so many of them can be computed at the same time.
+
+This example runs one inference of a small two-layer neural network (a multilayer perceptron,
+MLP) that recognises a handwritten digit. The weights are fixed and pre-trained; the programs only
+load them and run the inference. The same computation is written three times:
+\begin{itemize}
+  \item in C (\code{mlp.c}), which serves as the reference;
+  \item with the regular RISC-V integer instructions (RV64IM, \code{mlp\_scalar.s});
+  \item with the RISC-V Vector extension (RVV~1.0, \code{mlp\_vector.s}).
+\end{itemize}
+All files are in \code{benchmarks/mlp/}. Each assembly file is self-contained: the code, the
+weights and the input image are in the same file, and it runs on its own in \code{kites-cli} or in
+the GUI:
+\begin{lstlisting}[style=asm]
+kites-cli benchmarks/mlp/mlp_scalar.s --stats --mem-dump 0x10000000 22
+kites-cli benchmarks/mlp/mlp_vector.s --stats --mem-dump 0x10000000 22
+\end{lstlisting}
+
+The vector register length is VLEN~=~128~bits. With 32-bit elements (SEW~=~32) and groups of 8
+registers (LMUL~=~8), one vector instruction processes up to
+$\mathrm{VLMAX} = \mathrm{LMUL}\cdot\mathrm{VLEN}/\mathrm{SEW} = 8\cdot128/32 = 32$ elements.
+
+%==============================================================================================
+\section{The network}
+%==============================================================================================
+
+\begin{itemize}
+  \item \textbf{Input:} an 8$\times$8 image of a handwritten digit (here a 2), with pixel values
+        from 0 to 16, so 64 small integers.
+  \item \textbf{Layer 1:} 32 neurons, each computing $\sum_i x_i w_{ij} + b_j$, followed by ReLU
+        ($\max(\cdot, 0)$) and a right shift by 7 that scales the values back to $0 \ldots 127$.
+  \item \textbf{Layer 2:} 10 neurons, one score per digit.
+  \item \textbf{Output:} the predicted digit is the index of the largest score (argmax).
+  \item \textbf{Weights:} fixed 8-bit integer values ($-127 \ldots 127$, stored as 32-bit words)
+        in \code{mlp\_weights.h} and in the \code{.data} section of both programs. All arithmetic
+        is 32-bit integer arithmetic.
+\end{itemize}
+
+\begin{table}[H]
+\centering\small
+\caption{Size of the network. A MAC is one multiplication and one addition.}
+\label{tab:net}
+\begin{tabular}{lccrr}
+\toprule
+Layer & Inputs & Outputs & Weights & MACs \\
+\midrule
+Layer 1 (hidden, ReLU) & 64 & 32 & $64 \times 32$ & 2048 \\
+Layer 2 (output)       & 32 & 10 & $32 \times 10$ & 320 \\
+\midrule
+Total & & & & 2368 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%==============================================================================================
+\section{C code}
+%==============================================================================================
+
+Both layers are computed by the same function \code{dense()}. The weight matrix \code{W} is
+stored row by row with one row per \emph{input}: \code{W[i * n\_out + j]} is the weight from
+input \code{i} to neuron \code{j}, so the weights of neighbouring neurons are next to each other
+in memory. The parts shown in red are the ones executed with vector instructions in the vector
+version.
+
+\begin{lstlisting}[style=c]
+/* y[j] = b[j] + sum_i x[i] * W[i][j]  for j = 0 .. n_out-1, then optionally ReLU and >> shift.
+ * W is stored row by row, one row per input: W[i * n_out + j].
+ * The vector version vectorises the j loop: vl neurons per pass, one vmacc.vx per input. */
+static void dense(const int32_t *x, const int32_t *W, const int32_t *b, int32_t *y,
+                  int n_in, int n_out, int relu, int shift)
+{
+@    for (int j = 0; j < n_out; j++) {           /* VECTORISED: vl neurons at a time */@
+@        int32_t acc = b[j];@
+@        for (int i = 0; i < n_in; i++)@
+@            acc += x[i] * W[i * n_out + j];@
+@        if (relu)@
+@            acc = (acc > 0 ? acc : 0) >> shift; /* ReLU, then rescale */@
+@        y[j] = acc;@
+@    }@
+}
+
+/* Index of the largest value; the first one wins a tie.
+ * The vector version uses vredmax.vs, vmseq.vx and vfirst.m. */
+static int argmax(const int32_t *v, int n)
+{
+@    int cls = 0;                                /* VECTORISED: argmax */@
+@    for (int k = 1; k < n; k++)@
+@        if (v[k] > v[cls])@
+@            cls = k;@
+    return cls;
+}
+
+/* One inference with the fixed weights of mlp_weights.h. */
+int main(void)
+{
+    int32_t hidden[MLP_HID], logits[MLP_OUT];
+
+    dense(input, W1, b1, hidden, MLP_IN, MLP_HID, 1, MLP_SHIFT); /* layer 1: 64 -> 32, ReLU */
+    dense(hidden, W2, b2, logits, MLP_HID, MLP_OUT, 0, 0);       /* layer 2: 32 -> 10 */
+    int cls = argmax(logits, MLP_OUT);
+
+    printf("hidden");
+    for (int j = 0; j < MLP_HID; j++)
+        printf(" %d", (int)hidden[j]);
+    printf("\nlogits");
+    for (int k = 0; k < MLP_OUT; k++)
+        printf(" %d", (int)logits[k]);
+    printf("\npredicted digit %d (the image shows a %d)\n", cls, INPUT_LABEL);
+    return 0;
+}
+\end{lstlisting}
+
+\begin{itemize}
+  \item \textbf{The neuron loop over \code{j}} contains all 2368 MACs. Its iterations are
+        independent, so the vector version computes \code{vl} neurons at once, with \code{vl} up
+        to 32. For a fixed input \code{i}, the weights \code{W[i][j..j+vl-1]} are consecutive in
+        memory: one vector load fetches them, and one \code{vmacc.vx} multiplies all of them by
+        the same \code{x[i]} and adds the products to the \code{vl} accumulators.
+  \item \textbf{The inner loop over \code{i}} stays a loop in both versions.
+  \item \textbf{ReLU and the shift} become one vector instruction each (\code{vmax.vx},
+        \code{vsra.vi}).
+  \item \textbf{The argmax} becomes a maximum reduction (\code{vredmax.vs}), a compare
+        (\code{vmseq.vx}) and \code{vfirst.m}, which returns the position of the first score equal
+        to the maximum, so the first maximum wins a tie, as in the C code.
+\end{itemize}
+
+%==============================================================================================
+\section{RISC-V assembly}
+%==============================================================================================
+
+The two programs are identical except for \code{dense} and the argmax. The arguments of
+\code{dense} are passed in \code{a0}~=~\code{x}, \code{a1}~=~\code{W}, \code{a2}~=~\code{b},
+\code{a3}~=~\code{y}, \code{a4}~=~\code{n\_in}, \code{a5}~=~\code{n\_out}, \code{a6}~=~\code{relu}.
+
+\subsection{Main program (same in both versions)}
+
+\begin{lstlisting}[style=asm]
+        .text
+# ---- layer 1:  hidden = max(input . W1 + b1, 0) >> 7 ----------------------------------------
+        la      a0, input               # a0 = x        (64 pixels)
+        la      a1, W1                  # a1 = W        (64 x 32, row i = weights from input i)
+        la      a2, b1                  # a2 = b        (32 biases)
+        la      a3, hidden              # a3 = y        (32 outputs)
+        li      a4, 64                  # a4 = n_in
+        li      a5, 32                  # a5 = n_out
+        li      a6, 1                   # a6 = relu
+        jal     ra, dense
+# ---- layer 2:  logits = hidden . W2 + b2 -----------------------------------------------------
+        la      a0, hidden
+        la      a1, W2
+        la      a2, b2
+        la      a3, logits
+        li      a4, 32
+        li      a5, 10
+        li      a6, 0                   # no ReLU on the output layer
+        jal     ra, dense
+\end{lstlisting}
+
+The results are written at the start of the \code{.data} section, followed by the inputs:
+\begin{lstlisting}[style=asm]
+        .data
+cls:    .zero   4                       # predicted digit (written)
+logits: .zero   40                      # 10 output scores (written)
+hidden: .zero   128                     # 32 hidden values (written)
+
+input:      # 8 x 8 image of a handwritten 2, pixels 0..16
+        .word ...
+W1:      # 64 x 32: row i = weights from input i
+        .word ...
+b1:
+        .word ...
+W2:      # 32 x 10: row j = weights from hidden neuron j
+        .word ...
+b2:
+        .word ...
+\end{lstlisting}
+
+\subsection{\code{dense()} with scalar instructions}
+
+One neuron per iteration of \code{jloop}, and one MAC per iteration of \code{iloop} (8
+instructions). \code{mulw} and \code{addw} are the 32-bit forms of \code{mul} and \code{add} on
+RV64, so the accumulator wraps around exactly like a C \code{int32\_t}. ReLU is done without a
+branch.
+
+\begin{lstlisting}[style=asm]
+# ---- dense(x=a0, W=a1, b=a2, y=a3, n_in=a4, n_out=a5, relu=a6) --------------------------------
+#      one neuron per iteration of jloop; one multiply-accumulate per iteration of iloop
+dense:
+        slli    t3, a5, 2               # t3 = n_out * 4 = bytes per row of W
+jloop:
+        lw      t0, 0(a2)               # t0 = acc = b[j]
+        mv      t1, a0                  # t1 = &x[0]
+        mv      t2, a1                  # t2 = &W[0][j]
+        mv      t4, a4                  # t4 = inputs left
+iloop:
+        lw      t5, 0(t1)               # t5 = x[i]
+        lw      t6, 0(t2)               # t6 = W[i][j]
+        mulw    t5, t5, t6              # t5 = x[i] * W[i][j]   (32-bit)
+        addw    t0, t0, t5              # acc += x[i] * W[i][j] (32-bit)
+        addi    t1, t1, 4               # next input
+        add     t2, t2, t3              # next row of W, same column j
+        addi    t4, t4, -1
+        bnez    t4, iloop
+        beqz    a6, store
+        slti    t5, t0, 0               # ReLU without a branch: t5 = (acc < 0)
+        addi    t5, t5, -1              #   t5 = acc < 0 ? 0 : all ones
+        and     t0, t0, t5              #   acc = max(acc, 0)
+        srai    t0, t0, 7               # rescale: acc >>= 7
+store:
+        sw      t0, 0(a3)               # y[j] = acc
+        addi    a1, a1, 4               # next column of W
+        addi    a2, a2, 4               # next bias
+        addi    a3, a3, 4               # next output
+        addi    a5, a5, -1              # one neuron done
+        bnez    a5, jloop
+        ret
+end:
+\end{lstlisting}
+
+\subsection{\code{dense()} with vector instructions}
+
+Each pass of \code{jloop} handles \code{vl} = min(neurons left, VLMAX) neurons. The accumulators
+are in \code{v8}--\code{v15} and a row of weights in \code{v16}--\code{v23}. Layer~1 (32 neurons)
+needs one pass, layer~2 (10 neurons) one pass with \code{vl} = 10. The vector instructions are
+shown in red.
+
+\begin{lstlisting}[style=asm]
+# ---- dense(x=a0, W=a1, b=a2, y=a3, n_in=a4, n_out=a5, relu=a6) --------------------------------
+#      vectorised over the output neurons: each pass of jloop computes vl neurons at once
+dense:
+        slli    t3, a5, 2               # t3 = n_out * 4 = bytes per row of W
+jloop:
+        vsetvli t0, a5, e32, m8, ta, ma # t0 = vl = min(neurons left, VLMAX)
+        vle32.v v8, (a2)                # v8-v15  = acc[j..j+vl-1] = b[j..j+vl-1]
+        mv      t1, a0                  # t1 = &x[0]
+        mv      t2, a1                  # t2 = &W[0][j]
+        mv      t4, a4                  # t4 = inputs left
+iloop:
+        lw      t5, 0(t1)               # t5 = x[i]
+        vle32.v v16, (t2)               # v16-v23 = W[i][j..j+vl-1]
+        vmacc.vx v8, t5, v16            # acc[j..] += x[i] * W[i][j..]
+        addi    t1, t1, 4               # next input
+        add     t2, t2, t3              # next row of W
+        addi    t4, t4, -1
+        bnez    t4, iloop
+        beqz    a6, store
+        vmax.vx v8, v8, zero            # ReLU: acc = max(acc, 0)
+        vsra.vi v8, v8, 7               # rescale: acc >>= 7
+store:
+        vse32.v v8, (a3)                # y[j..j+vl-1] = acc
+        slli    t6, t0, 2               # t6 = vl * 4
+        add     a1, a1, t6              # next vl columns of W
+        add     a2, a2, t6              # next vl biases
+        add     a3, a3, t6              # next vl outputs
+        sub     a5, a5, t0              # vl neurons done
+        bnez    a5, jloop
+        ret
+end:
+\end{lstlisting}
+
+\subsection{Argmax}
+
+\begin{lstlisting}[style=asm]
+# ---- argmax:  cls = index of the largest logit (the first one on a tie) ----------------------
+        la      t1, logits              # t1 = &logits[0]
+        lw      t2, 0(t1)               # t2 = best = logits[0]
+        li      t3, 0                   # t3 = cls  = 0
+        li      t4, 1                   # t4 = k    = 1
+        li      t5, 10                  # t5 = number of logits
+aloop:
+        addi    t1, t1, 4               # t1 = &logits[k]
+        lw      t6, 0(t1)               # t6 = logits[k]
+        ble     t6, t2, anext           # not larger: keep the current best
+        mv      t2, t6                  # best = logits[k]
+        mv      t3, t4                  # cls  = k
+anext:
+        addi    t4, t4, 1               # k++
+        blt     t4, t5, aloop
+        la      t1, cls
+        sw      t3, 0(t1)               # store the predicted digit
+        j       end
+\end{lstlisting}
+\begin{lstlisting}[style=asm]
+# ---- argmax:  cls = index of the largest logit (the first one on a tie) ----------------------
+        vsetivli t0, 10, e32, m8, ta, ma # vl = 10 logits
+        la      t1, logits
+        vle32.v v0, (t1)                # v0-v7 = logits[0..9]
+        li      t6, -2147483648         # INT32_MIN
+        vmv.s.x v24, t6                 # v24[0] = INT32_MIN (start value of the maximum)
+        vredmax.vs v24, v0, v24         # v24[0] = m = max(logits)
+        vmv.x.s t6, v24                 # t6 = m
+        vmseq.vx v8, v0, t6             # mask bit k = (logits[k] == m)
+        vfirst.m t3, v8                 # t3 = first k with logits[k] == m
+        la      t1, cls
+        sw      t3, 0(t1)               # store the predicted digit
+        j       end
+\end{lstlisting}
+
+\begin{table}[H]
+\centering\small
+\caption{How each part of the C code maps to scalar and to vector instructions.}
+\label{tab:map}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{5.2cm}>{\raggedright\arraybackslash}p{5.9cm}}
+\toprule
+C code & Scalar & Vector \\
+\midrule
+\code{for (j ...)} & one neuron per iteration & \code{vsetvli} picks \code{vl} neurons per pass \\
+\code{acc = b[j]}  & \code{lw} & \code{vle32.v} (\code{vl} biases) \\
+\code{x[i]}        & \code{lw} & \code{lw} (one value shared by all \code{vl} neurons) \\
+\code{W[i*n\_out+j]} & \code{lw} & \code{vle32.v} (\code{vl} weights of row \code{i}) \\
+\code{acc += x*W}  & \code{mulw} + \code{addw} & \code{vmacc.vx} (\code{vl} MACs) \\
+ReLU               & \code{slti}, \code{addi}, \code{and} & \code{vmax.vx} \\
+\code{>> 7}        & \code{srai} & \code{vsra.vi} \\
+\code{y[j] = acc}  & \code{sw} & \code{vse32.v} \\
+argmax             & loop: one compare and branch per score
+                   & \code{vredmax.vs}, \code{vmseq.vx}, \code{vfirst.m} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%==============================================================================================
+\section{Verification}
+%==============================================================================================
+
+The script \code{verify\_mlp.py} compiles and runs \code{mlp.c}, runs both assembly programs on
+the simulator, and compares the memory they wrote with the output of the C program.
+
+\begin{itemize}
+  \item All three predict the digit 2, which is what the image shows.
+  \item Both assembly programs wrote exactly the same 32 hidden values and 10 scores as the C
+        program, bit for bit: the scores are $4404$, $-6771$, $7711$, $3489$, $-8134$, $-5004$, $-4673$, $-1570$, $-4577$, $-577$.
+  \item The number of executed instructions equals the count obtained from the listings
+        (Table~\ref{tab:results}).
+\end{itemize}
+
+While writing this example we found that the assembler rejected \code{addw} (and the other RV64
+word instructions), and that \code{addiw}, \code{slliw}, \code{srliw} and \code{sraiw} ignored
+their immediate. Both bugs were fixed in the simulator.
+
+%==============================================================================================
+\section{Comparison}
+%==============================================================================================
+
+\begin{table}[H]
+\centering\small
+\caption{One inference on the single-cycle VM (one instruction per step), VLEN = 128.}
+\label{tab:results}
+\begin{tabular}{lrrr}
+\toprule
+Metric & Scalar & Vector & Speedup \\
+\midrule
+Instructions                       & 19\,619 & 742 & \textbf{26.44$\times$} \\
+\quad layer 1 ($64 \to 32$, ReLU)  & 16\,878 & 477 & 35.38$\times$ \\
+\quad layer 2 ($32 \to 10$)        & 2\,684 & 251 & 10.69$\times$ \\
+\quad argmax                       & 57 & 14 & 4.07$\times$ \\
+Instructions per MAC               & 8.29 & 0.31 & \\
+Memory instructions                & 4\,831 & 198 & 24.40$\times$ \\
+Bytes moved                        & 19\,324 & 10\,236 & 1.89$\times$ \\
+Branches                           & 2\,470 & 100 & 24.70$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{Overall,} one inference needs 26.44 times fewer instructions with the vector
+        extension (742 instead of 19\,619). On the single-cycle VM every instruction takes
+        one step, so this is also the speedup in execution time.
+  \item \textbf{Layer 1} has 32 neurons, exactly one full pass, so every vector instruction works
+        on all 32 lanes. Its speedup of 35.38$\times$ is close to the limit
+        $8 \cdot 32 / 7 \approx 36.6$: 8 scalar instructions per MAC against 7 vector instructions
+        per 32 MACs.
+  \item \textbf{Layer 2} has only 10 neurons, so only 10 of the 32 lanes are used and the speedup
+        drops to 10.69$\times$. The gain grows with the width of the layer, up to VLMAX.
+  \item \textbf{Memory.} The vector program executes 24.40 times fewer loads and stores, but
+        moves only 1.89 times fewer bytes: every weight must still be read once. The scalar
+        version also reloads each input once per neuron, the vector version once per pass.
+\end{itemize}
+
+%==============================================================================================
+\section{Conclusion}
+%==============================================================================================
+
+One inference of a 64--32--10 integer MLP with fixed weights runs correctly on the Kites simulator
+with both scalar and vector instructions, and both give exactly the same results as the C program.
+The vector version needs 26.44 times fewer instructions. Most of the gain comes from computing
+up to 32 neurons per instruction with \code{vmacc.vx}; it is largest for layers whose width fills
+the vector (layer~1) and smaller for the narrow 10-neuron output layer.
+
+\end{document}

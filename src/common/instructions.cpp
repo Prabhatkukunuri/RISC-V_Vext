@@ -1224,6 +1224,11 @@ std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map 
     {"sra", {SyntaxType::O_GPR_C_GPR_C_GPR}},
     {"slt", {SyntaxType::O_GPR_C_GPR_C_GPR}},
     {"sltu", {SyntaxType::O_GPR_C_GPR_C_GPR}},
+    {"addw", {SyntaxType::O_GPR_C_GPR_C_GPR}},
+    {"subw", {SyntaxType::O_GPR_C_GPR_C_GPR}},
+    {"sllw", {SyntaxType::O_GPR_C_GPR_C_GPR}},
+    {"srlw", {SyntaxType::O_GPR_C_GPR_C_GPR}},
+    {"sraw", {SyntaxType::O_GPR_C_GPR_C_GPR}},
 
     {"addi", {SyntaxType::O_GPR_C_GPR_C_I}},
     {"xori", {SyntaxType::O_GPR_C_GPR_C_I}},
@@ -1234,6 +1239,10 @@ std::unordered_map<std::string, std::vector<SyntaxType>> instruction_syntax_map 
     {"srai", {SyntaxType::O_GPR_C_GPR_C_I}},
     {"slti", {SyntaxType::O_GPR_C_GPR_C_I}},
     {"sltiu", {SyntaxType::O_GPR_C_GPR_C_I}},
+    {"addiw", {SyntaxType::O_GPR_C_GPR_C_I}},
+    {"slliw", {SyntaxType::O_GPR_C_GPR_C_I}},
+    {"srliw", {SyntaxType::O_GPR_C_GPR_C_I}},
+    {"sraiw", {SyntaxType::O_GPR_C_GPR_C_I}},
 
     {"lb", {SyntaxType::O_GPR_C_I_LP_GPR_RP, SyntaxType::O_GPR_C_DL}},
     {"lh", {SyntaxType::O_GPR_C_I_LP_GPR_RP, SyntaxType::O_GPR_C_DL}},

@@ -1,0 +1,107 @@
+[
+ {
+  "case": "vl_zero",
+  "description": "vl = 0: loads and stores do nothing",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "tail_undisturbed",
+  "description": "elements past vl are not loaded or stored",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "masked",
+  "description": "masked load and masked store (v0 = 0b1010)",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "stride_negative_zero",
+  "description": "negative stride (reverse) and zero stride (broadcast)",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "indexed",
+  "description": "indexed gather (vluxei32) and scatter (vsuxei32)",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "segment",
+  "description": "segment load/store: array of (x, y) pairs split and re-joined",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "byte_elements",
+  "description": "8-bit elements, and EEW (8) different from SEW (32)",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "misaligned",
+  "description": "misaligned base addresses for a load and a store",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "whole_register",
+  "description": "whole-register load/store ignore vl (vl = 0 here)",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "mask_bytes",
+  "description": "vlm.v / vsm.v move ceil(vl / 8) bytes (vl = 10 -> 2 bytes)",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "register_group_m8",
+  "description": "LMUL = 8: one load/store moves 32 words through v8-v15",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "scalar_vector_ordering",
+  "description": "scalar store then vector load, vector store then scalar load",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "fault_only_first",
+  "description": "vle8ff.v: a fault after element 0 trims vl instead of trapping",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "load_fault",
+  "description": "an ordinary load that faults stops the run with an access fault",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ },
+ {
+  "case": "illegal_group",
+  "description": "misaligned register group is an illegal instruction",
+  "rvss": true,
+  "rv5-h-nf": true,
+  "rv5-h-f": true
+ }
+]
