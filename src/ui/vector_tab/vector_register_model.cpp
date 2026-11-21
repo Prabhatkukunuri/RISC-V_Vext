@@ -7,7 +7,6 @@
 #include <QBrush>
 #include <QColor>
 #include <QPalette>
-#include <algorithm>
 
 namespace Kites
 {
@@ -158,31 +157,8 @@ int VectorRegisterModel::rowCount(const QModelIndex &parent) const
 
 int VectorRegisterModel::columnCount(const QModelIndex &parent) const
 {
-    // Reg name, the elements, then the register read as a mask.
-    return parent.isValid() ? 0 : static_cast<int>(2 + elementsPerRegister());
-}
-
-int VectorRegisterModel::maskColumn() const
-{
-    return static_cast<int>(1 + elementsPerRegister());
-}
-
-QString VectorRegisterModel::maskBits(size_t reg) const
-{
-    // Bit i of a mask register belongs to element i: show bits 0..vl-1, element 0 first,
-    // in groups of 8.
-    const uint64_t vl = m_registers->ReadCsr(RegisterFile::CSR_VL);
-    const uint64_t shown = std::min<uint64_t>(vl, m_shown[reg].size() * 8);
-    QString bits;
-    for (uint64_t i = 0; i < shown; ++i)
-    {
-        if (i != 0 && i % 8 == 0)
-        {
-            bits += ' ';
-        }
-        bits += ((m_shown[reg][i / 8] >> (i % 8)) & 1) ? '1' : '0';
-    }
-    return bits;
+    // Reg name, then the elements.
+    return parent.isValid() ? 0 : static_cast<int>(1 + elementsPerRegister());
 }
 
 QVariant VectorRegisterModel::headerData(int section, Qt::Orientation orientation, int role) const
@@ -193,16 +169,7 @@ QVariant VectorRegisterModel::headerData(int section, Qt::Orientation orientatio
     }
     if (role == Qt::DisplayRole)
     {
-        if (section == maskColumn())
-        {
-            return QString("As mask (bit 0 → vl-1)");
-        }
         return section == 0 ? QString("Reg") : QString("[%1]").arg(section - 1);
-    }
-    if (role == Qt::ToolTipRole && section == maskColumn())
-    {
-        return QString("The register read as a mask: bit i belongs to element i. Compares, "
-                       "vmadc/vmsbc and vlm.v write masks; v0 is the mask used by v0.t.");
     }
     if (role == Qt::ToolTipRole && section > 0)
     {
@@ -277,22 +244,6 @@ QVariant VectorRegisterModel::data(const QModelIndex &index, int role) const
         return QVariant{};
     }
     const size_t reg = static_cast<size_t>(index.row());
-    if (index.column() == maskColumn())
-    {
-        if (role == Qt::DisplayRole)
-        {
-            return maskBits(reg);
-        }
-        if (role == Qt::TextAlignmentRole)
-        {
-            return QVariant(Qt::AlignLeft | Qt::AlignVCenter);
-        }
-        if (role == Qt::ToolTipRole)
-        {
-            return QString("v%1 as a mask, bits 0..vl-1 (element 0 first)").arg(reg);
-        }
-        return QVariant{};
-    }
     const bool isNameColumn = index.column() == 0;
     const size_t element = isNameColumn ? 0 : static_cast<size_t>(index.column() - 1);
     const VtypeView vtype = currentVtype();
@@ -384,19 +335,6 @@ QVariant VectorRegisterModel::data(const QModelIndex &index, int role) const
                 tip += QString("\nchanged: was 0x%1")
                            .arg(elementValue(m_previous[reg], element), 0, 16);
             }
-        }
-        if (reg == 0)
-        {
-            // v0 is also the mask register: show its first vl bits, element 0 first.
-            QString bits;
-            const uint64_t shown = std::min<uint64_t>(vl, m_shown[0].size() * 8);
-            for (uint64_t i = 0; i < shown; ++i)
-            {
-                bits += ((m_shown[0][i / 8] >> (i % 8)) & 1) ? '1' : '0';
-            }
-            tip += QString("\nmask (v0.t) bits 0..%1: %2")
-                       .arg(shown == 0 ? 0 : shown - 1)
-                       .arg(shown == 0 ? QString("(vl = 0)") : bits);
         }
         return tip;
     }

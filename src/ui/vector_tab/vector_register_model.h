@@ -70,9 +70,6 @@ class VectorRegisterModel : public QAbstractTableModel
     /// Index of an element within its LMUL register group, or -1 if tails can't be shown.
     int64_t groupElementIndex(size_t reg, size_t element) const;
     QString formatValue(uint64_t value) const;
-    /// Column that shows each register read as a mask (bits 0..vl-1).
-    int maskColumn() const;
-    QString maskBits(size_t reg) const;
 
     RegisterFile *m_registers = nullptr;
     uint64_t m_viewEew = 0;
