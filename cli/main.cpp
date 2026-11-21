@@ -29,7 +29,7 @@ void printUsage(const char *programName)
     std::cerr
         << "Usage: " << programName
         << " [assembly-file] [--vm <name>] [--mem-dump <hex_addr> <row_count>]... [--stats]\n"
-        << "       [--vlen <bits>] [--repl|-i]\n"
+        << "       [--vlen <bits>] [--bicameral] [--repl|-i]\n"
         << "  assembly-file   optional; if given without --repl, assembles, runs to\n"
         << "                  completion, and dumps state (batch mode)\n"
         << "  --vm <name>     rvss (default) | rv5-nh-nf | rv5-h-nf | rv5-nh-f | rv5-h-f\n"
@@ -39,6 +39,8 @@ void printUsage(const char *programName)
         << "                  writes vm_state/stats_dump.json; the instruction mix, memory\n"
         << "                  traffic and vector work need --vm rvss\n"
         << "  --vlen <bits>   vector register length (default 128)\n"
+        << "  --bicameral     use the Bicameral Cache (Scalar Cache + sectored Vector Cache)\n"
+        << "                  as the L1 data cache; L2 is enlarged to at least its size\n"
         << "  --repl, -i      drop into the interactive REPL instead of auto-running;\n"
         << "                  if assembly-file is given it is loaded before the prompt\n"
         << "  (running with no assembly-file also enters the REPL)\n";
@@ -64,6 +66,7 @@ int main(int argc, char *argv[])
     std::vector<std::string> memDumpArgs;
     bool replRequested = false;
     bool statsRequested = false;
+    bool bicameralRequested = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -110,6 +113,10 @@ int main(int argc, char *argv[])
                 std::cerr << "Error: invalid " << arg << " value: " << e.what() << "\n";
                 return 1;
             }
+        }
+        else if (arg == "--bicameral")
+        {
+            bicameralRequested = true;
         }
         else if (arg == "--repl" || arg == "-i")
         {
@@ -199,6 +206,10 @@ int main(int argc, char *argv[])
     // GUI's per-instruction animation; it must be zeroed here or an N-instruction
     // program takes N seconds to run.
     manager.setStepDelay(0);
+    if (bicameralRequested)
+    {
+        manager.getMemoryController()->setBicameralEnabled(true);
+    }
     manager.loadProgram(program);
     // See the REPL branch above: drop the end-of-program breakpoint that LoadProgram plants.
     manager.setBreakpoints({});
@@ -225,6 +236,13 @@ int main(int argc, char *argv[])
 
     Kites::DumpRegisters(Kites::globals::registers_dump_file_path, *manager.getRegisterFile());
 
+    if (bicameralRequested)
+    {
+        // The Bicameral Cache is write-back: put what the program wrote into main memory, which
+        // is what --mem-dump reads.
+        manager.getMemoryController()->writeBackAllCaches();
+    }
+
     if (!memDumpArgs.empty())
     {
         try
@@ -243,6 +261,27 @@ int main(int argc, char *argv[])
         std::cout << stats.write(Kites::globals::vm_state_directory / "stats_dump.json",
                                  processorTypeStr, manager.getCycles(),
                                  manager.getInstructionsRetired(), singleCycle);
+        if (bicameralRequested)
+        {
+            Kites::MemoryController *memory = manager.getMemoryController();
+            const Kites::BicameralStats b = memory->getBicameralCache()->getStats();
+            const Kites::BicameralConfig &config = memory->getBicameralCache()->getConfig();
+            std::cout << "Bicameral Cache (L1 " << config.totalBytes() / 1024 << " KB = SC "
+                      << config.scalarBytes() / 1024 << " KB + VC " << config.vectorBytes() / 1024
+                      << " KB; L2 " << memory->getL2Cache()->getCacheSizeInBytes() / 1024
+                      << " KB)\n"
+                      << "  Geometry     : SC " << config.scalar.lineCount << " indices x "
+                      << config.scalar.wayCount << " ways x " << config.sectorSize
+                      << " B; VC fully associative, " << config.vectorLineCount << " lines x "
+                      << config.sectorsPerLine << " sectors x " << config.sectorSize << " B\n"
+                      << "  Scalar Cache : " << b.scalarHits << " hits, " << b.scalarMisses
+                      << " misses, " << b.scalarWriteBacks << " write-backs\n"
+                      << "  Vector Cache : " << b.vectorHits << " hits, " << b.vectorSectorMisses
+                      << " sector misses, " << b.vectorLineMisses << " line misses, "
+                      << b.vectorWriteBacks << " sector write-backs\n"
+                      << "  Cross lookup : " << b.migrations << " SC->VC migrations, "
+                      << b.crossHits << " scalar cross-hits in the VC\n";
+        }
     }
 
     std::cout << "Assembled '" << assemblyFile << "': " << program.text_buffer.size()

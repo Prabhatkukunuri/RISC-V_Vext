@@ -9,6 +9,7 @@
 
 #include "config/config.h"
 #include "cache/cache.h"
+#include "cache/bicameral/bicameral_cache.h"
 #include "main_memory.h"
 #include <QObject>
 #include <iostream>
@@ -28,6 +29,13 @@ class MemoryController : public QObject
     Cache l2_cache_;          ///< The second level cache object for even faster memory access.
     Cache l1_cache_;          ///< The cache object for faster memory access. 
     Cache instruction_cache_; ///< The cache object for instructions.
+    /// Optional split L1 data cache (Scalar Cache + Vector Cache); replaces l1_cache_ for data
+    /// accesses while enabled. Backed by l2_cache_.
+    BicameralCache bicameral_cache_;
+    bool bicameral_enabled_ = false;
+
+    /// Enlarges L2 if it is smaller than the Bicameral Cache (see BicameralCache::requiredL2).
+    void ensureL2FitsBicameral();
 
   public:
     MemoryController();
@@ -45,6 +53,28 @@ class MemoryController : public QObject
     [[nodiscard]] uint16_t readHalfWord(uint64_t address);
     [[nodiscard]] uint32_t readWord(uint64_t address);
     [[nodiscard]] uint64_t readDoubleWord(uint64_t address);
+
+    // Vector element accesses (vle*/vse*). They go to the Vector Cache when the Bicameral Cache is
+    // enabled, and to the L1 data cache exactly like the scalar functions otherwise.
+    [[nodiscard]] uint8_t vectorReadByte(uint64_t address);
+    [[nodiscard]] uint16_t vectorReadHalfWord(uint64_t address);
+    [[nodiscard]] uint32_t vectorReadWord(uint64_t address);
+    [[nodiscard]] uint64_t vectorReadDoubleWord(uint64_t address);
+    void vectorWriteByte(uint64_t address, uint8_t value);
+    void vectorWriteHalfWord(uint64_t address, uint16_t value);
+    void vectorWriteWord(uint64_t address, uint32_t value);
+    void vectorWriteDoubleWord(uint64_t address, uint64_t value);
+
+    // Bicameral Cache switch. Enabling writes the L1 data cache back and empties it; disabling
+    // does the same to the Bicameral Cache. Either way L2 is enlarged if it is smaller than L1.
+    void setBicameralEnabled(bool enabled);
+    [[nodiscard]] bool isBicameralEnabled() const;
+    void reconfigureBicameral(const BicameralConfig &config);
+    BicameralCache *getBicameralCache();
+    /// Writes every dirty line of every data cache (L1 or Bicameral, then L2) down to main
+    /// memory, so memory dumps and views show what the program wrote. Contents stay valid.
+    void writeBackAllCaches();
+
     // Functions to read memory directly with cache bypass
     [[nodiscard]] uint8_t readByte_d(uint64_t address);
     [[nodiscard]] uint16_t readHalfWord_d(uint64_t address);
@@ -75,6 +105,7 @@ class MemoryController : public QObject
     /// @p size bytes starting at @p address were written (1, 2, 4 or 8).
     void memoryUpdated(uint64_t address, unsigned int size);
     void memoryResetSignal();
+    void bicameralEnabledChangedSignal(bool enabled);
 };
 }// namespace Kites
 #endif // MEMORY_CONTROLLER_H

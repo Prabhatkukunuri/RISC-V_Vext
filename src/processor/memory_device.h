@@ -12,10 +12,14 @@ namespace Kites
  */
 class Cache;
 class MainMemory;
+class VectorCache;
+class BicameralCache;
 class MemoryDevice
 {
     friend class Cache;
     friend class MainMemory;
+    friend class VectorCache;    // Bicameral Cache: fills and writes back whole sectors
+    friend class BicameralCache;
     public: 
     MemoryDevice() = default;
     virtual ~MemoryDevice() = default;

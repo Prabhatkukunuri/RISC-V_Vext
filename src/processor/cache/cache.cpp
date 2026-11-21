@@ -31,6 +31,56 @@ createPolicy(ReplacementPolicy policy_type, const std::string &custom_policy_scr
 }
 }
 
+std::unique_ptr<CacheReplacementPolicy> makeReplacementPolicy(ReplacementPolicy type,
+                                                              const std::string &scriptPath)
+{
+    return createPolicy(type, scriptPath);
+}
+
+bool Cache::probe(uint64_t address, size_t size) const
+{
+    uint64_t current = address;
+    const uint64_t end = address + size - 1;
+    while (current <= end)
+    {
+        if (findWay(getSetIndex(current), getTag(current)) >= m_wayCount)
+        {
+            return false;
+        }
+        current += m_lineSizeInBytes - getOffset(current);
+    }
+    return true;
+}
+
+std::optional<CacheLine> Cache::extractLine(uint64_t address)
+{
+    const size_t setIndex = getSetIndex(address);
+    const size_t wayIndex = findWay(setIndex, getTag(address));
+    if (wayIndex >= m_wayCount)
+    {
+        return std::nullopt;
+    }
+    CacheLine &line = lineForWrite(setIndex, wayIndex);
+    CacheLine taken = line;
+    line.valid = false;
+    line.dirty = false;
+    emit cacheLineUpdatedSignal(address);
+    return taken;
+}
+
+void Cache::writeBackAll()
+{
+    for (size_t setIndex = 0; setIndex < m_setCount; ++setIndex)
+    {
+        for (size_t wayIndex = 0; wayIndex < m_wayCount; ++wayIndex)
+        {
+            writeBack(setIndex, wayIndex); // no-op unless valid and dirty
+        }
+    }
+    emit cacheLineUpdatedSignal(0);
+    updateStats();
+}
+
 
 void Cache::setupCache(size_t setCount, size_t lineSize, size_t wayCount)
 {

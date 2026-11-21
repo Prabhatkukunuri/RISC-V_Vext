@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -71,6 +72,10 @@ namespace default_cache_config
     constexpr ReplacementPolicy replacementPolicy = ReplacementPolicy::LRU;
 }
 
+/// The replacement policy object for @p type (LRU, FIFO, or a Lua script at @p scriptPath).
+std::unique_ptr<CacheReplacementPolicy> makeReplacementPolicy(ReplacementPolicy type,
+                                                              const std::string &scriptPath = {});
+
 class Cache : public QObject, public MemoryDevice
 {
     Q_OBJECT
@@ -110,6 +115,16 @@ public:
 
     void reset();
     void flush(); // write back all dirty lines to memory and and invalidate all lines in cache
+
+    // Used by the Bicameral Cache (processor/cache/bicameral), whose Scalar Cache is a Cache.
+    // True if every line [address, address + size) touches is present. Counts nothing.
+    [[nodiscard]] bool probe(uint64_t address, size_t size) const;
+    // Removes the line holding @p address and returns it (data and dirty bit), without writing it
+    // back or counting an access; nullopt if absent. For moving a line to another cache.
+    std::optional<CacheLine> extractLine(uint64_t address);
+    // Writes every dirty line to the next level and marks it clean; lines stay valid and the
+    // statistics other than the write-back count are untouched.
+    void writeBackAll();
 
     // Undo/redo history, one entry per processor step. Between beginStep() and commitStep()
     // the first change to each line is recorded; commitStep() always pushes an entry so the

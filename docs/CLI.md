@@ -27,7 +27,7 @@ The resulting binary is `kites-cli` (`build/kites-cli`, or
 ## Usage
 
 ```
-kites-cli <assembly-file> [--vm <name>] [--mem-dump <hex_addr> <row_count>]...
+kites-cli <assembly-file> [--vm <name>] [--mem-dump <hex_addr> <row_count>]... [--bicameral]
 ```
 
 | Argument       | Description                                                                          |
@@ -35,6 +35,7 @@ kites-cli <assembly-file> [--vm <name>] [--mem-dump <hex_addr> <row_count>]...
 | `<assembly-file>` | Path to the `.s` file to assemble and run. Required.                              |
 | `--vm <name>`  | Which VM to run on (see table below). Defaults to `rvss`.                            |
 | `--mem-dump <hex_addr> <row_count>` | Dump `<row_count>` 8-byte rows of memory starting at `<hex_addr>` after the run. Repeatable — pass it multiple times to dump several regions in one invocation. |
+| `--bicameral`  | Use the Bicameral Cache as the L1 data cache (see below). |
 
 ### `--vm` values
 
@@ -86,6 +87,40 @@ Dumping a region of memory in the same run:
 adds a `Memory -> .../vm_state/memory_dump.json` line and writes both
 requested regions (4 rows starting at address `0x0`, then 2 rows starting at
 `0x100`) to that file.
+
+## Bicameral Cache (`--bicameral`)
+
+`--bicameral` replaces the L1 data cache with the Bicameral Cache
+(`src/processor/cache/bicameral/`), after *The Bicameral Cache: a split cache for vector
+architectures* (arXiv 2407.15440). It is an 8 KB L1 split into two halves:
+
+| Half | Organisation | Used for |
+|------|--------------|----------|
+| Scalar Cache (SC) | 16 indices x 4 ways x 64 B lines = 4 KB | scalar loads and stores |
+| Vector Cache (VC) | fully associative, 4 lines x 1 KB, each line 16 sectors of 64 B = 4 KB | vector loads and stores (`vle*`/`vse*`) |
+
+- A VC miss is either a **sector miss** (the line is there, the 64 B sector isn't: fetch that
+  sector, evict nothing) or a **line miss** (no line for the 1 KB block: evict a whole line,
+  writing back only its dirty sectors, then fetch one sector).
+- **Cross lookup, one-sided migration**: a vector access whose sector is in the SC moves it to the
+  VC; a scalar access whose sector is in the VC is served there and stays there. A sector is never
+  in both halves.
+- The two halves are always the same size, and the SC block size is the sector size. In the GUI
+  (Cache tab → Bicameral L1) you pick the L1 size, the sector size, the sectors per VC line and the
+  SC associativity; the SC index count and the VC line count are derived from them.
+- Both halves are write-back and write-allocate with LRU replacement. Every transfer between L1
+  and L2 is one 64 B sector. L2 is enlarged, if needed, to at least 8 KB with 64 B lines.
+- Before `--mem-dump`, all dirty data is written back to main memory so the dump shows what the
+  program wrote.
+
+With `--stats`, the summary gets a Bicameral Cache section:
+
+```
+Bicameral Cache (L1 8 KB = SC 4 KB + VC 4 KB; L2 8 KB)
+  Scalar Cache : 0 hits, 0 misses, 0 write-backs
+  Vector Cache : 28 hits, 1 sector misses, 1 line misses, 1 sector write-backs
+  Cross lookup : 0 SC->VC migrations, 0 scalar cross-hits in the VC
+```
 
 ## Program output during the run
 

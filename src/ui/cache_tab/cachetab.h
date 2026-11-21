@@ -2,6 +2,7 @@
 #include "cache_grid_delegate.h"
 #include "cacheconfigwidget.h"
 #include "cachemodel.h"
+#include "bicameral/bicameral_cache_widget.h"
 #include "ui/common/kitestab.h"
 #include "processor/memory_controller.h"
 #include <QWidget>
@@ -33,10 +34,13 @@ private:
     };
 	//void updateCacheConfig(CacheLevel cacheLevel, CacheConfig newConfig);
     bool enforceL2AtLeastL1();
+    /// Reconfigures L2 from the L2 widget, enlarged to fit the Bicameral Cache while it is on.
+    void applyL2Config();
 
     std::array<CacheModel*, CacheLevelCount> m_cacheModels{};
     MemoryController  *m_memoryController    {nullptr};
     Ui::CacheTab *ui;
+    BicameralCacheWidget *m_bicameralWidget{nullptr};
 signals:
     void cacheConfigChangedSignal(CacheLevel cacheLevel, CacheConfig newConfig);
 };

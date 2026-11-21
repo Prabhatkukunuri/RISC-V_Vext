@@ -180,13 +180,13 @@ uint64_t LoadElement(MemoryController &memory, uint64_t address, uint32_t eew)
         switch (eew)
         {
         case 8:
-            return memory.readByte(address);
+            return memory.vectorReadByte(address);
         case 16:
-            return memory.readHalfWord(address);
+            return memory.vectorReadHalfWord(address);
         case 32:
-            return memory.readWord(address);
+            return memory.vectorReadWord(address);
         default:
-            return memory.readDoubleWord(address);
+            return memory.vectorReadDoubleWord(address);
         }
     }
     catch (const std::out_of_range &error)
@@ -211,16 +211,16 @@ void StoreElement(MemoryController &memory, uint64_t address, uint32_t eew, uint
         switch (eew)
         {
         case 8:
-            memory.writeByte(address, static_cast<uint8_t>(value));
+            memory.vectorWriteByte(address, static_cast<uint8_t>(value));
             break;
         case 16:
-            memory.writeHalfWord(address, static_cast<uint16_t>(value));
+            memory.vectorWriteHalfWord(address, static_cast<uint16_t>(value));
             break;
         case 32:
-            memory.writeWord(address, static_cast<uint32_t>(value));
+            memory.vectorWriteWord(address, static_cast<uint32_t>(value));
             break;
         default:
-            memory.writeDoubleWord(address, value);
+            memory.vectorWriteDoubleWord(address, value);
             break;
         }
         std::vector<uint8_t> after(bytes);

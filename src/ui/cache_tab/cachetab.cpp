@@ -46,24 +46,49 @@ CacheTab::CacheTab(QWidget *parent, MemoryController *memoryController)
     // ui->splitter->setStretchFactor(0, 0);
     // ui->splitter->setStretchFactor(1, 1);
 
+    // The Bicameral Cache page is built in code (no .ui change) and added as a fourth tab.
+    m_bicameralWidget = new BicameralCacheWidget(this, m_memoryController);
+    ui->tabWidget->addTab(m_bicameralWidget, "Bicameral L1");
+    // L2 can be changed from both pages; whichever changes it, both show the new value.
+    connect(m_bicameralWidget, &BicameralCacheWidget::l2MayHaveChangedSignal, this,
+            [this]
+            {
+                ui->L2Config->setConfig(m_memoryController->getL2Cache()->getConfig());
+                m_bicameralWidget->loadL2FromController();
+            });
+    connect(m_bicameralWidget, &BicameralCacheWidget::l2GeometryRequestedSignal, this,
+            [this](const CacheConfig &geometry)
+            {
+                CacheConfig l2      = ui->L2Config->getConfig(); // the L2 tab's policies
+                l2.lineCount        = geometry.lineCount;
+                l2.wayCount         = geometry.wayCount;
+                l2.lineSizeInBytes  = geometry.lineSizeInBytes;
+                ui->L2Config->setConfig(l2); // signals blocked
+                if (!m_memoryController->isBicameralEnabled())
+                {
+                    enforceL2AtLeastL1();
+                }
+                applyL2Config();
+            });
+
     changeMemoryController(m_memoryController);
     
     connect(ui->L1Config, &CacheConfigWidget::configChangedSignal, this, [this]{
         if (enforceL2AtLeastL1())
         {
-            m_memoryController->getL2Cache()->reconfigure(ui->L2Config->getConfig());
+            applyL2Config();
         }
         m_memoryController->getL1Cache()->reconfigure(ui->L1Config->getConfig());
     });
     connect(ui->InstructionConfig, &CacheConfigWidget::configChangedSignal, this, [this]{
         if(enforceL2AtLeastL1())
         {
-            m_memoryController->getL2Cache()->reconfigure(ui->L2Config->getConfig());
+            applyL2Config();
         }
         m_memoryController->getInstructionCache()->reconfigure(ui->InstructionConfig->getConfig());
     });
     connect(ui->L2Config, &CacheConfigWidget::configChangedSignal, this, [this]{
-        m_memoryController->getL2Cache()->reconfigure(ui->L2Config->getConfig());
+        applyL2Config();
     });
 
     //set initial config values in the UI from the memory controller's caches
@@ -98,6 +123,10 @@ void CacheTab::changeMemoryController(MemoryController *memoryController)
     m_cacheModels[CacheLevel::Instruction]->attachCache(m_memoryController->getInstructionCache());
     m_cacheModels[CacheLevel::L1]->attachCache(m_memoryController->getL1Cache());
     m_cacheModels[CacheLevel::L2]->attachCache(m_memoryController->getL2Cache());
+    if (m_bicameralWidget)
+    {
+        m_bicameralWidget->changeMemoryController(m_memoryController);
+    }
 
     // Refresh cache signal wiring from new cache objects.
     // Note: do not disconnect config widgets globally; that would remove
@@ -123,6 +152,23 @@ void CacheTab::changeMemoryController(MemoryController *memoryController)
             &CacheConfigWidget::customPolicyScriptLoadedSlot);
     connect(m_memoryController->getInstructionCache(), &Cache::customPolicyScriptLoadedSignal,
             ui->InstructionConfig, &CacheConfigWidget::customPolicyScriptLoadedSlot);
+}
+
+void CacheTab::applyL2Config()
+{
+    CacheConfig config = ui->L2Config->getConfig();
+    if (m_memoryController->isBicameralEnabled())
+    {
+        config = BicameralCache::requiredL2(
+            m_memoryController->getBicameralCache()->getConfig(), config,
+            m_memoryController->getInstructionCache()->getCacheSizeInBytes());
+        ui->L2Config->setConfig(config); // show the enlarged L2 (signals blocked)
+    }
+    m_memoryController->getL2Cache()->reconfigure(config);
+    if (m_bicameralWidget)
+    {
+        m_bicameralWidget->loadL2FromController(); // keep the Bicameral L1 page in step
+    }
 }
 
 bool CacheTab::enforceL2AtLeastL1()
