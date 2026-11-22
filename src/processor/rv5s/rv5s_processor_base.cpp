@@ -791,8 +791,7 @@ uint64_t RV5StageVM_Base::execute_csr(uint32_t instruction, uint64_t rs1_value)
     return old_value;
 }
 
-uint64_t RV5StageVM_Base::special_execute_result(uint32_t instruction, uint64_t alu_result,
-                                                 uint64_t rs1_value)
+uint64_t RV5StageVM_Base::special_execute_result(uint32_t instruction, uint64_t alu_result, uint64_t rs1_value)
 {
     const uint8_t opcode = instruction & 0x7F;
     if (opcode == 0b1110011 && ((instruction >> 12) & 0x7) != 0)

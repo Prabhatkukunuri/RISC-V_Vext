@@ -102,22 +102,8 @@ class RV5StageVM_Base : public ProcessorBase
      */
     uint64_t execute_csr(uint32_t instruction, uint64_t rs1_value);
 
-    /**
-     * @brief EX results that don't come from the ALU: the old CSR value for a CSR instruction
-     * (see execute_csr). Other instructions keep @p alu_result.
-     */
-    uint64_t special_execute_result(uint32_t instruction, uint64_t alu_result,
-                                    uint64_t rs1_value);
+    uint64_t special_execute_result(uint32_t instruction, uint64_t alu_result, uint64_t rs1_value);
 
-
-    /**
-     * @brief Executes a vector instruction (OP-V, or a vector load/store) in EX. Vector registers,
-     * vector CSRs and memory are committed here, as the F/D ops commit fcsr: instructions reach EX
-     * in order and EX is never squashed, so the next vector instruction always sees these writes.
-     * Stages run WB -> MEM -> EX each cycle, so an older scalar store in MEM has already written
-     * memory when a vector load executes, and a younger scalar load reaches MEM only afterwards.
-     * Returns the value for rd (the new vl of a vset*; reg_write is off for the others).
-     */
     uint64_t execute_vector(uint32_t instruction, uint64_t rs1_value, uint64_t rs2_value);
 
     void pipeline_memory();
