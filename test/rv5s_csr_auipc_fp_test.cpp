@@ -232,3 +232,77 @@ TEST(Rv5sAuipcFpTest, PipelinesMatchTheSingleCycleVm)
         ExpectSame(ref, RunProgram<Kites::RV5StageProcessorNHF>(kAuipcFpProgram));
     }
 }
+
+namespace
+{
+// Integer <-> FP register dependencies through the forwarding paths:
+//  - an integer load feeding the base address of an FP load (load-use);
+//  - an FP result in f9 must not be taken for x9 by an integer instruction right after;
+//  - FP compare / convert / move results go to x registers and are forwarded as such;
+//  - an integer result feeding fcvt.s.w / fmv.w.x right away;
+//  - an FMA whose rs3 field makes bits 31:25 look like feq's funct7 still writes an FPR.
+// "<LOAD_GAP>" marks where NH_F (no hazard detection) needs a free slot after a load.
+const char *kIntFpProgram = ".data\n"
+                            "ptr:  .dword 0x10000010\n"           // address of val
+                            "pad:  .dword 0\n"
+                            "val:  .word 0x40490fdb\n"            // 3.14159f
+                            ".text\n"
+                            "    lui    a0, 0x10000\n"
+                            "    li     s1, 100\n"                // x9 = 100
+                            "    li     t1, 3\n"
+                            "    fcvt.s.w f1, t1\n"               // f1 = 3.0 (t1 one ahead)
+                            "    ld     a1, 0(a0)\n<LOAD_GAP>"    // a1 = &val
+                            "    flw    f2, 0(a1)\n<LOAD_GAP>"    // base from the load: 3.14159
+                            "    fadd.s f9, f1, f1\n"             // writes f9, not x9
+                            "    addi   s2, s1, 1\n"              // x18 = x9 + 1 = 101
+                            "    feq.s  a2, f1, f1\n"             // a2 = 1 (an x register)
+                            "    addi   a3, a2, 10\n"             // 11, forwarded from feq
+                            "    fcvt.s.w f6, a3\n"               // f6 = 11.0, a3 one ahead
+                            "    fmv.x.w a4, f6\n"                // a4 = bits of 11.0
+                            "    addi   a5, a4, 0\n"              // forwarded from fmv.x.w
+                            "    fmadd.s f19, f1, f1, f20\n"      // rs3 = 20: bits 31:25 = 1010000
+                            "    addi   s4, s3, 0\n"              // x19 (s3) must still be 0
+                            "    nop\n    nop\n    nop\n";
+
+std::string WithLoadGap(const std::string &program, const std::string &gap)
+{
+    std::string out = program;
+    for (size_t at = out.find("<LOAD_GAP>"); at != std::string::npos;
+         at = out.find("<LOAD_GAP>", at))
+    {
+        out.replace(at, 10, gap);
+    }
+    return out;
+}
+} // namespace
+
+TEST(Rv5sIntFpForwardingTest, ReferenceValuesOnTheSingleCycleVm)
+{
+    const Snapshot ref = RunProgram<Kites::RVSSProcessor>(WithLoadGap(kIntFpProgram, ""));
+    EXPECT_EQ(ref.fprs[2] & 0xFFFFFFFFu, 0x40490fdbu); // f2 = 3.14159f
+    EXPECT_EQ(ref.gprs[18], 101u);                    // s2 = x9 + 1, not the bits of f9
+    EXPECT_EQ(ref.gprs[13], 11u);                     // a3 = feq + 10
+    EXPECT_EQ(ref.gprs[15], 0x41300000u);             // a5 = bits of 11.0f
+    EXPECT_EQ(ref.gprs[19], 0u);                      // s3 untouched by the FMA (f19 only)
+    EXPECT_EQ(ref.gprs[20], 0u);                      // s4 = s3
+}
+
+TEST(Rv5sIntFpForwardingTest, PipelinesMatchTheSingleCycleVm)
+{
+    const std::string program = WithLoadGap(kIntFpProgram, "");
+    const Snapshot ref = RunProgram<Kites::RVSSProcessor>(program);
+    {
+        SCOPED_TRACE("H_F");
+        ExpectSame(ref, RunProgram<Kites::RV5StageProcessorHF>(program));
+    }
+    {
+        SCOPED_TRACE("H_NF");
+        ExpectSame(ref, RunProgram<Kites::RV5StageProcessorHNF>(program));
+    }
+    {
+        SCOPED_TRACE("NH_F, with a free slot after each load");
+        const std::string spaced = WithLoadGap(kIntFpProgram, "    nop\n");
+        ExpectSame(RunProgram<Kites::RVSSProcessor>(spaced),
+                   RunProgram<Kites::RV5StageProcessorNHF>(spaced));
+    }
+}

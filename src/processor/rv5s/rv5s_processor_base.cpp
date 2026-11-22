@@ -158,6 +158,20 @@ void RV5StageVM_Base::setProcessorState()
     {program_counter_, if_id_reg_.pc, id_ex_reg_.pc, ex_mem_reg_.pc, mem_wb_reg_.pc};
 }
 
+namespace
+{
+/// Whether an F/D instruction writes its result to an integer register (x[rd]) instead of an
+/// FPR: compares, fcvt to an integer, fmv.x and fclass. Decode uses it to set reg_write/freg_write.
+bool FpResultGoesToGpr(uint32_t instruction)
+{
+    const uint8_t funct7 = ((instruction >> 25) & 0x7F) & ~1u; // without the .s/.d bit
+    return (instruction & 0x7F) == 0b1010011 &&                  // OP-FP (not FMA, not FP loads)
+           (funct7 == 0b1010000     // feq / flt / fle
+            || funct7 == 0b1100000  // fcvt.w / wu / l / lu
+            || funct7 == 0b1110000); // fmv.x.w / fmv.x.d, fclass
+}
+} // namespace
+
 void RV5StageVM_Base::pipeline_decode()
 {
     uint32_t instruction = if_id_reg_.instruction;
@@ -215,19 +229,21 @@ void RV5StageVM_Base::pipeline_decode()
         id_ex_reg_.freg3_data = registers_.ReadFpr(id_ex_reg_.frs3);
 
 
-        // For load instructions, rs1 is a GPR base address.
-        // For integer-to-float conversions / moves, rs1 is also a GPR source.
     }
-    else
-    {
-        id_ex_reg_.reg1_data = registers_.ReadGpr(id_ex_reg_.rs1);
-        id_ex_reg_.reg2_data = registers_.ReadGpr(id_ex_reg_.rs2);
-    }
+    // Always read the GPR operands: FP loads/stores and int->FP ops use x[rs1] too (base address
+    // or integer source), and EX forwards these values for every instruction.
+    id_ex_reg_.reg1_data = registers_.ReadGpr(id_ex_reg_.rs1);
+    id_ex_reg_.reg2_data = registers_.ReadGpr(id_ex_reg_.rs2);
 
-    // Pass all control signals to the next stage
-    id_ex_reg_.reg_write  = control_unit_.GetRegWrite();
-    id_ex_reg_.freg_write = instruction_set::isFInstruction(instruction) ||
-                            instruction_set::isDInstruction(instruction);
+    // Pass all control signals to the next stage. reg_write means "writes x[rd]" and freg_write
+    // "writes f[rd]", so forwarding, the HDU and WB can trust them: an FP instruction writes an FPR
+    // unless its result goes to an integer register (feq/flt/fle, fcvt.w*/l*, fmv.x.*, fclass).
+    const bool is_fp = instruction_set::isFInstruction(instruction) ||
+                       instruction_set::isDInstruction(instruction);
+    const bool writes_rd = control_unit_.GetRegWrite();
+    const bool fp_to_gpr = is_fp && FpResultGoesToGpr(instruction);
+    id_ex_reg_.reg_write  = writes_rd && (!is_fp || fp_to_gpr);
+    id_ex_reg_.freg_write = writes_rd && is_fp && !fp_to_gpr;
     id_ex_reg_.branch     = control_unit_.GetBranch();
     id_ex_reg_.alu_src    = control_unit_.GetAluSrc();
     id_ex_reg_.mem_read   = control_unit_.GetMemRead();
@@ -573,7 +589,7 @@ void RV5StageVM_Base::pipeline_writeback()
         instructions_retired_++;
     }
 
-    if (!mem_wb_reg_.reg_write)
+    if (!mem_wb_reg_.reg_write && !mem_wb_reg_.freg_write)
     {
         return;
     }
@@ -651,7 +667,6 @@ void RV5StageVM_Base::pipeline_writeback_float()
     // yes i just copy pasted this from rvss
     uint64_t current_instruction_ = mem_wb_reg_.instruction;
     uint8_t opcode = current_instruction_ & 0b1111111;
-    uint8_t funct7 = (current_instruction_ >> 25) & 0b1111111;
     uint8_t rd = (current_instruction_ >> 7) & 0b11111;
 
     uint64_t old_reg = 0;
@@ -659,9 +674,9 @@ void RV5StageVM_Base::pipeline_writeback_float()
     unsigned int reg_type = 2; // 0 for GPR, 1 for CSR, 2 for FPR
     uint64_t new_reg = 0;
 
-    // write to GPR
-    if (funct7 == 0b1010000 || funct7 == 0b1100000 || funct7 == 0b1110000)
-    { // f(eq|lt|le).s, fcvt.(w|wu|l|lu).s
+    // write to GPR: decode set reg_write only for FP ops whose result is an integer
+    if (mem_wb_reg_.reg_write)
+    { // f(eq|lt|le).s, fcvt.(w|wu|l|lu).s, fmv.x.w, fclass.s
         old_reg = registers_.ReadGpr(rd);
         registers_.WriteGpr(rd, mem_wb_reg_.alu_result);
         new_reg = mem_wb_reg_.alu_result;
@@ -693,7 +708,6 @@ void RV5StageVM_Base::pipeline_writeback_double()
 {
     uint64_t current_instruction_ = mem_wb_reg_.instruction;
     uint8_t opcode = current_instruction_ & 0b1111111;
-    uint8_t funct7 = (current_instruction_ >> 25) & 0b1111111;
     uint8_t rd = (current_instruction_ >> 7) & 0b11111;
 
     uint64_t old_reg = 0;
@@ -701,9 +715,9 @@ void RV5StageVM_Base::pipeline_writeback_double()
     unsigned int reg_type = 2; // 0 for GPR, 1 for CSR, 2 for FPR
     uint64_t new_reg = 0;
 
-    // write to GPR
-    if (funct7 == 0b1010001 || funct7 == 0b1100001 || funct7 == 0b1110001)
-    { // f(eq|lt|le).d, fcvt.(w|wu|l|lu).d
+    // write to GPR: decode set reg_write only for FP ops whose result is an integer
+    if (mem_wb_reg_.reg_write)
+    { // f(eq|lt|le).d, fcvt.(w|wu|l|lu).d, fmv.x.d, fclass.d
         old_reg = registers_.ReadGpr(rd);
         registers_.WriteGpr(rd, mem_wb_reg_.alu_result);
         new_reg = mem_wb_reg_.alu_result;
@@ -731,39 +745,6 @@ void RV5StageVM_Base::pipeline_writeback_double()
     }
 }
 
-namespace
-{
-/// Whether an instruction with these control signals writes a GPR. FP instructions set
-/// reg_write too; only compares, fcvt to integer, fmv.x and fclass actually target a GPR.
-bool WritesGpr(uint32_t instruction, bool reg_write, bool freg_write)
-{
-    if (!reg_write)
-    {
-        return false;
-    }
-    if (!freg_write)
-    {
-        return true;
-    }
-    const uint8_t funct7 = ((instruction >> 25) & 0x7F) & ~1u; // without the .s/.d bit
-    return (instruction & 0x7F) == 0b1010011 &&
-           (funct7 == 0b1010000 || funct7 == 0b1100000 || funct7 == 0b1110000);
-}
-} // namespace
-
-uint64_t RV5StageVM_Base::forwarded_gpr(uint8_t reg) const
-{
-    if (reg == 0)
-    {
-        return 0;
-    }
-    if (ex_mem_reg_.rd == reg &&
-        WritesGpr(ex_mem_reg_.instruction, ex_mem_reg_.reg_write, ex_mem_reg_.freg_write))
-    {
-        return ex_mem_reg_.alu_result;
-    }
-    return registers_.ReadGpr(reg);
-}
 
 uint64_t RV5StageVM_Base::execute_csr(uint32_t instruction, uint64_t rs1_value)
 {

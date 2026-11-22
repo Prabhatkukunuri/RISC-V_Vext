@@ -214,86 +214,89 @@ void RV5StageProcessorNHF::pipeline_execute()
     bool is_f_instruction = instruction_set::isFInstruction(instruction);
     bool is_d_instruction = instruction_set::isDInstruction(instruction);
 
+    // --- GPR forwarding: runs first, for every instruction ---
+    // Integer ops use alu_in1/alu_in2 below; FP ops get the forwarded x[rs1] (the base address
+    // of FP loads/stores, the integer source of fcvt.s.w / fmv.w.x).
+    // ALU execution with forwarding
+
+    // Initial ALU inputs are the stale values read from the register file (ID_EX)
+    uint64_t alu_in1 = id_ex_reg_.reg1_data;
+    uint64_t alu_in2 = id_ex_reg_.reg2_data;
+
+    // If AluSrc is true (I-type ALU, Load, Store), override reg2_data with the immediate
+    if (id_ex_reg_.alu_src)
+    {
+        alu_in2 = static_cast<uint64_t>(id_ex_reg_.imm);
+    }
+
+    // Forwarding values (Source = 00 means no forwarding, use ID_EX value)
+    uint8_t forward_a = 0; // 2 = EX/MEM, 1 = MEM/WB
+    uint8_t forward_b = 0;
+
+    // --- FORWARDING LOGIC (All non-Load-Use/Branch cases solved here) ---
+
+    // **Priority 1: EX/MEM (Data available from current instruction in MEM)**
+    // Covers R->R, R->Branch, R->MemAddr, R->Store (Cases 1, 5, 7, 3)
+    if (ex_mem_reg_.reg_write && (ex_mem_reg_.rd != 0))
+    {
+        if (ex_mem_reg_.rd == id_ex_reg_.rs1)
+        {
+            forward_a = 2; // Forward A from EX/MEM ALU result
+        }
+        if (ex_mem_reg_.rd == id_ex_reg_.rs2)
+        {
+            forward_b = 2; // Forward B from EX/MEM ALU result
+        }
+    }
+
+    // **Priority 2: MEM/WB (Data available from current instruction in WB)**
+    // Used for dependencies two cycles ago, and to forward Load data after the 1 NOP delay.
+    if (mem_wb_reg_.prev_reg_write && (mem_wb_reg_.prev_rd != 0))
+    {
+        // Forward A from MEM/WB unless EX/MEM is forwarding to the same register (Priority)
+        if (mem_wb_reg_.prev_rd == id_ex_reg_.rs1 && forward_a != 2)
+        {
+            forward_a = 1; // Forward A from MEM/WB result (ALU or Memory)
+        }
+        // Forward B from MEM/WB unless EX/MEM is forwarding to the same register (Priority)
+        if (mem_wb_reg_.prev_rd == id_ex_reg_.rs2 && forward_b != 2)
+        {
+            forward_b = 1; // Forward B from MEM/WB result (ALU or Memory)
+        }
+    }
+
+    // Forwarding Source A
+    if (forward_a == 2)
+    { // Forward from EX/MEM
+        alu_in1 = ex_mem_reg_.alu_result;
+    }
+    else if (forward_a == 1)
+    { // Forward from MEM/WB
+        alu_in1 = mem_wb_reg_.prev_mem_to_reg ? mem_wb_reg_.prev_memory_data
+                                              : mem_wb_reg_.prev_alu_result;
+    }
+
+    // Forwarding Source B
+    if (forward_b == 2)
+    { // Forward from EX/MEM
+        alu_in2 = ex_mem_reg_.alu_result;
+    }
+    else if (forward_b == 1)
+    { // Forward from MEM/WB
+        alu_in2 = mem_wb_reg_.prev_mem_to_reg ? mem_wb_reg_.prev_memory_data
+                                              : mem_wb_reg_.prev_alu_result;
+    }
+
     if (is_f_instruction)
     {
-        alu_result = pipeline_execute_float();
+        alu_result = pipeline_execute_float(alu_in1);
     }
     else if (is_d_instruction)
     {
-        alu_result = pipeline_execute_double();
+        alu_result = pipeline_execute_double(alu_in1);
     }
     else
     {
-        // ALU execution with forwarding
-
-        // Initial ALU inputs are the stale values read from the register file (ID_EX)
-        uint64_t alu_in1 = id_ex_reg_.reg1_data;
-        uint64_t alu_in2 = id_ex_reg_.reg2_data;
-
-        // If AluSrc is true (I-type ALU, Load, Store), override reg2_data with the immediate
-        if (id_ex_reg_.alu_src)
-        {
-            alu_in2 = static_cast<uint64_t>(id_ex_reg_.imm);
-        }
-
-        // Forwarding values (Source = 00 means no forwarding, use ID_EX value)
-        uint8_t forward_a = 0; // 2 = EX/MEM, 1 = MEM/WB
-        uint8_t forward_b = 0;
-
-        // --- FORWARDING LOGIC (All non-Load-Use/Branch cases solved here) ---
-
-        // **Priority 1: EX/MEM (Data available from current instruction in MEM)**
-        // Covers R->R, R->Branch, R->MemAddr, R->Store (Cases 1, 5, 7, 3)
-        if (ex_mem_reg_.reg_write && (ex_mem_reg_.rd != 0))
-        {
-            if (ex_mem_reg_.rd == id_ex_reg_.rs1)
-            {
-                forward_a = 2; // Forward A from EX/MEM ALU result
-            }
-            if (ex_mem_reg_.rd == id_ex_reg_.rs2)
-            {
-                forward_b = 2; // Forward B from EX/MEM ALU result
-            }
-        }
-
-        // **Priority 2: MEM/WB (Data available from current instruction in WB)**
-        // Used for dependencies two cycles ago, and to forward Load data after the 1 NOP delay.
-        if (mem_wb_reg_.prev_reg_write && (mem_wb_reg_.prev_rd != 0))
-        {
-            // Forward A from MEM/WB unless EX/MEM is forwarding to the same register (Priority)
-            if (mem_wb_reg_.prev_rd == id_ex_reg_.rs1 && forward_a != 2)
-            {
-                forward_a = 1; // Forward A from MEM/WB result (ALU or Memory)
-            }
-            // Forward B from MEM/WB unless EX/MEM is forwarding to the same register (Priority)
-            if (mem_wb_reg_.prev_rd == id_ex_reg_.rs2 && forward_b != 2)
-            {
-                forward_b = 1; // Forward B from MEM/WB result (ALU or Memory)
-            }
-        }
-
-        // Forwarding Source A
-        if (forward_a == 2)
-        { // Forward from EX/MEM
-            alu_in1 = ex_mem_reg_.alu_result;
-        }
-        else if (forward_a == 1)
-        { // Forward from MEM/WB
-            alu_in1 = mem_wb_reg_.prev_mem_to_reg ? mem_wb_reg_.prev_memory_data
-                                                  : mem_wb_reg_.prev_alu_result;
-        }
-
-        // Forwarding Source B
-        if (forward_b == 2)
-        { // Forward from EX/MEM
-            alu_in2 = ex_mem_reg_.alu_result;
-        }
-        else if (forward_b == 1)
-        { // Forward from MEM/WB
-            alu_in2 = mem_wb_reg_.prev_mem_to_reg ? mem_wb_reg_.prev_memory_data
-                                                  : mem_wb_reg_.prev_alu_result;
-        }
-
         // Re-apply immediate value check after forwarding for ALU_B if needed
         if (id_ex_reg_.alu_src && id_ex_reg_.alu_op != 0)
         {
@@ -424,7 +427,7 @@ void RV5StageProcessorNHF::pipeline_execute()
     }
 }
 
-uint64_t RV5StageProcessorNHF::pipeline_execute_float()
+uint64_t RV5StageProcessorNHF::pipeline_execute_float(uint64_t int_rs1)
 {
     uint32_t instruction = id_ex_reg_.instruction;
     uint8_t opcode = instruction & 0b1111111;
@@ -446,7 +449,7 @@ uint64_t RV5StageProcessorNHF::pipeline_execute_float()
 
     if (funct7 == 0b1101000 || funct7 == 0b1111000 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
+        reg1_value = int_rs1; // GPR source (base address / int operand), already forwarded
     }
 
     if (id_ex_reg_.alu_src)
@@ -504,7 +507,7 @@ uint64_t RV5StageProcessorNHF::pipeline_execute_float()
     // requires GPR, use it.
     if (funct7 == 0b1101000 || funct7 == 0b1111000 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
+        reg1_value = int_rs1; // GPR source (base address / int operand), already forwarded
     }
 
     // Re-apply immediate if ALUSrc was set (immediates take precedence for reg2)
@@ -532,7 +535,7 @@ uint64_t RV5StageProcessorNHF::pipeline_execute_float()
     return alu_result;
 }
 
-uint64_t RV5StageProcessorNHF::pipeline_execute_double()
+uint64_t RV5StageProcessorNHF::pipeline_execute_double(uint64_t int_rs1)
 {
     uint32_t instruction = id_ex_reg_.instruction;
     uint8_t opcode = instruction & 0b1111111;
@@ -554,7 +557,7 @@ uint64_t RV5StageProcessorNHF::pipeline_execute_double()
 
     if (funct7 == 0b1101001 || funct7 == 0b1111001 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
+        reg1_value = int_rs1; // GPR source (base address / int operand), already forwarded
     }
 
     if (id_ex_reg_.alu_src)
@@ -610,7 +613,7 @@ uint64_t RV5StageProcessorNHF::pipeline_execute_double()
     // Re-apply GPR-read override for specific instructions
     if (funct7 == 0b1101001 || funct7 == 0b1111001 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
+        reg1_value = int_rs1; // GPR source (base address / int operand), already forwarded
     }
 
     // Re-apply immediate for reg2

@@ -47,8 +47,8 @@ class RV5StageProcessorHF : public RV5StageVM_Base
     void pipeline_fetch() override;
     // void pipeline_decode() override;
     void pipeline_execute() override;
-    uint64_t pipeline_execute_float() override;
-    uint64_t pipeline_execute_double() override;
+    uint64_t pipeline_execute_float(uint64_t int_rs1) override;
+    uint64_t pipeline_execute_double(uint64_t int_rs1) override;
     // void pipeline_memory() override;
     //  void pipeline_writeback() override;
 

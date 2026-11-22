@@ -285,65 +285,68 @@ void RV5StageProcessorHF::pipeline_execute()
     bool is_f_instruction = instruction_set::isFInstruction(instruction);
     bool is_d_instruction = instruction_set::isDInstruction(instruction);
 
+    // --- GPR forwarding: runs first, for every instruction ---
+    // Integer ops use alu_in1/alu_in2 below; FP ops get the forwarded x[rs1] (the base address
+    // of FP loads/stores, the integer source of fcvt.s.w / fmv.w.x).
+    uint64_t alu_in1 = id_ex_reg_.reg1_data;
+    uint64_t alu_in2 = id_ex_reg_.reg2_data;
+
+    // --- GPR FORWARDING LOGIC ---
+    uint8_t forward_a = 0; // 10 = EX/MEM, 01 = MEM/WB
+    uint8_t forward_b = 0;
+
+    // **Priority 1: EX/MEM Forward** (R-R, R-Store hazard solved)
+    if (ex_mem_reg_.reg_write && (ex_mem_reg_.rd != 0))
+    {
+        if (ex_mem_reg_.rd == id_ex_reg_.rs1)
+            forward_a = 2;
+        if (ex_mem_reg_.rd == id_ex_reg_.rs2)
+            forward_b = 2;
+    }
+
+    // **Priority 2: MEM/WB Forward** (R-R, L-Store hazard solved)
+    if (mem_wb_reg_.prev_reg_write && (mem_wb_reg_.prev_rd != 0))
+    {
+        // Forward A from MEM/WB unless EX/MEM is already forwarding
+        if (mem_wb_reg_.prev_rd == id_ex_reg_.rs1 && forward_a != 2)
+            forward_a = 1;
+        // Forward B from MEM/WB unless EX/MEM is already forwarding
+        if (mem_wb_reg_.prev_rd == id_ex_reg_.rs2 && forward_b != 2)
+            forward_b = 1;
+    }
+
+    // --- FORWARDING APPLICATION ---
+
+    if (forward_a == 2)
+    {
+        alu_in1 = ex_mem_reg_.alu_result;
+    }
+    else if (forward_a == 1)
+    {
+        alu_in1 = mem_wb_reg_.prev_mem_to_reg ? mem_wb_reg_.prev_memory_data
+                                              : mem_wb_reg_.prev_alu_result;
+    }
+
+    if (forward_b == 2)
+    {
+        alu_in2 = ex_mem_reg_.alu_result;
+    }
+    else if (forward_b == 1)
+    {
+        alu_in2 = mem_wb_reg_.prev_mem_to_reg ? mem_wb_reg_.prev_memory_data
+                                              : mem_wb_reg_.prev_alu_result;
+    }
+
     if (is_f_instruction)
     {
-        alu_result = pipeline_execute_float();
+        alu_result = pipeline_execute_float(alu_in1);
     }
     else if (is_d_instruction)
     {
-        alu_result = pipeline_execute_double();
+        alu_result = pipeline_execute_double(alu_in1);
     }
     else
     {
-        uint64_t alu_in1 = id_ex_reg_.reg1_data;
-        uint64_t alu_in2 = id_ex_reg_.reg2_data;
-
-        // --- GPR FORWARDING LOGIC ---
-        uint8_t forward_a = 0; // 10 = EX/MEM, 01 = MEM/WB
-        uint8_t forward_b = 0;
-
-        // **Priority 1: EX/MEM Forward** (R-R, R-Store hazard solved)
-        if (ex_mem_reg_.reg_write && (ex_mem_reg_.rd != 0))
-        {
-            if (ex_mem_reg_.rd == id_ex_reg_.rs1)
-                forward_a = 2;
-            if (ex_mem_reg_.rd == id_ex_reg_.rs2)
-                forward_b = 2;
-        }
-
-        // **Priority 2: MEM/WB Forward** (R-R, L-Store hazard solved)
-        if (mem_wb_reg_.prev_reg_write && (mem_wb_reg_.prev_rd != 0))
-        {
-            // Forward A from MEM/WB unless EX/MEM is already forwarding
-            if (mem_wb_reg_.prev_rd == id_ex_reg_.rs1 && forward_a != 2)
-                forward_a = 1;
-            // Forward B from MEM/WB unless EX/MEM is already forwarding
-            if (mem_wb_reg_.prev_rd == id_ex_reg_.rs2 && forward_b != 2)
-                forward_b = 1;
-        }
-
-        // --- FORWARDING APPLICATION ---
-
-        if (forward_a == 2)
-        {
-            alu_in1 = ex_mem_reg_.alu_result;
-        }
-        else if (forward_a == 1)
-        {
-            alu_in1 = mem_wb_reg_.prev_mem_to_reg ? mem_wb_reg_.prev_memory_data
-                                                  : mem_wb_reg_.prev_alu_result;
-        }
-
-        if (forward_b == 2)
-        {
-            alu_in2 = ex_mem_reg_.alu_result;
-        }
-        else if (forward_b == 1)
-        {
-            alu_in2 = mem_wb_reg_.prev_mem_to_reg ? mem_wb_reg_.prev_memory_data
-                                                  : mem_wb_reg_.prev_alu_result;
-        }
-
         // Re-apply immediate value check (must happen AFTER forwarding application)
         if (id_ex_reg_.alu_src)
         {
@@ -485,7 +488,7 @@ void RV5StageProcessorHF::handle_syscall()
     }
 }
 
-uint64_t RV5StageProcessorHF::pipeline_execute_float()
+uint64_t RV5StageProcessorHF::pipeline_execute_float(uint64_t int_rs1)
 {
     uint32_t instruction = id_ex_reg_.instruction;
     uint8_t opcode = instruction & 0b1111111;
@@ -507,7 +510,7 @@ uint64_t RV5StageProcessorHF::pipeline_execute_float()
 
     if (funct7 == 0b1101000 || funct7 == 0b1111000 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
+        reg1_value = int_rs1; // GPR source (base address / int operand), already forwarded
     }
 
     if (id_ex_reg_.alu_src)
@@ -565,7 +568,7 @@ uint64_t RV5StageProcessorHF::pipeline_execute_float()
     // requires GPR, use it.
     if (funct7 == 0b1101000 || funct7 == 0b1111000 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
+        reg1_value = int_rs1; // GPR source (base address / int operand), already forwarded
     }
 
     // Re-apply immediate if ALUSrc was set (immediates take precedence for reg2)
@@ -593,7 +596,7 @@ uint64_t RV5StageProcessorHF::pipeline_execute_float()
     return alu_result;
 }
 
-uint64_t RV5StageProcessorHF::pipeline_execute_double()
+uint64_t RV5StageProcessorHF::pipeline_execute_double(uint64_t int_rs1)
 {
     uint32_t instruction = id_ex_reg_.instruction;
     uint8_t opcode = instruction & 0b1111111;
@@ -615,7 +618,7 @@ uint64_t RV5StageProcessorHF::pipeline_execute_double()
 
     if (funct7 == 0b1101001 || funct7 == 0b1111001 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
+        reg1_value = int_rs1; // GPR source (base address / int operand), already forwarded
     }
 
     if (id_ex_reg_.alu_src)
@@ -669,7 +672,7 @@ uint64_t RV5StageProcessorHF::pipeline_execute_double()
     // Re-apply GPR-read override for specific instructions
     if (funct7 == 0b1101001 || funct7 == 0b1111001 || opcode == 0b0000111 || opcode == 0b0100111)
     {
-        reg1_value = forwarded_gpr(id_ex_reg_.rs1); // GPR source: base address / int operand
+        reg1_value = int_rs1; // GPR source (base address / int operand), already forwarded
     }
 
     // Re-apply immediate for reg2

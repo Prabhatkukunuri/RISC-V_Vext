@@ -225,11 +225,11 @@ void RV5StageProcessorHNF::pipeline_execute()
     bool overflow;
     if (is_f_instruction)
     {
-        alu_result = pipeline_execute_float();
+        alu_result = pipeline_execute_float(id_ex_reg_.reg1_data);
     }
     else if (is_d_instruction)
     {
-        alu_result = pipeline_execute_double();
+        alu_result = pipeline_execute_double(id_ex_reg_.reg1_data);
     }
     else
     {
@@ -349,7 +349,7 @@ void RV5StageProcessorHNF::handle_syscall()
     }
 }
 
-uint64_t RV5StageProcessorHNF::pipeline_execute_float()
+uint64_t RV5StageProcessorHNF::pipeline_execute_float(uint64_t /*int_rs1*/)
 {
     uint32_t instruction = id_ex_reg_.instruction;
     uint8_t opcode = instruction & 0b1111111;
@@ -387,7 +387,7 @@ uint64_t RV5StageProcessorHNF::pipeline_execute_float()
     return alu_result;
 }
 
-uint64_t RV5StageProcessorHNF::pipeline_execute_double()
+uint64_t RV5StageProcessorHNF::pipeline_execute_double(uint64_t /*int_rs1*/)
 {
     uint32_t instruction = id_ex_reg_.instruction;
     uint8_t opcode = instruction & 0b1111111;

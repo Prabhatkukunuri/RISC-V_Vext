@@ -88,36 +88,27 @@ class RV5StageVM_Base : public ProcessorBase
     void pipeline_decode();
 
     virtual void pipeline_execute() = 0;
-    virtual uint64_t pipeline_execute_float() = 0;
-    virtual uint64_t pipeline_execute_double() = 0;
+    /// @param int_rs1 x[rs1] for FP ops that read an integer register (the base address of
+    /// FP loads/stores, the source of fcvt.s.w / fmv.w.x): forwarded in the variants that
+    /// forward, ignored by the others (they read the register file in EX).
+    virtual uint64_t pipeline_execute_float(uint64_t int_rs1) = 0;
+    virtual uint64_t pipeline_execute_double(uint64_t int_rs1) = 0;
 
     uint64_t execute_float();
     uint64_t execute_double();
 
     /**
-     * @brief Executes a Zicsr instruction (csrrw/csrrs/csrrc and the immediate forms) in EX:
-     * the CSR is written now, with the same rules as the single-cycle VM (set/clear forms only
-     * write a non-zero operand; writing a read-only CSR is an illegal instruction), and the old
-     * CSR value is returned as the result that WB writes to rd.
-     * @param rs1_value x[rs1] after forwarding (ignored by the immediate forms).
+     * Helps us to run csr specific programs in the pipelined version. Please note that these do not truly follow the pipeline execution.
      */
     uint64_t execute_csr(uint32_t instruction, uint64_t rs1_value);
 
     /**
      * @brief EX results that don't come from the ALU: the old CSR value for a CSR instruction
-     * (see execute_csr). Other instructions keep @p alu_result; auipc is handled in each
-     * variant's pipeline_execute.
+     * (see execute_csr). Other instructions keep @p alu_result.
      */
     uint64_t special_execute_result(uint32_t instruction, uint64_t alu_result,
                                     uint64_t rs1_value);
 
-    /**
-     * @brief x[reg] as an instruction in EX must see it: the result of the instruction one
-     * stage ahead (EX/MEM) if it writes that GPR, else the register file (WB runs before EX in
-     * a cycle, so it already holds results from two stages ahead). For pipelines with
-     * forwarding; used where EX reads a GPR directly, e.g. the base address of FP loads/stores.
-     */
-    uint64_t forwarded_gpr(uint8_t reg) const;
 
     /**
      * @brief Executes a vector instruction (OP-V, or a vector load/store) in EX. Vector registers,
