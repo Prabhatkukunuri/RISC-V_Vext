@@ -221,7 +221,8 @@ const std::unordered_set<std::string> valid_vector_registers = {
 };
 
 const std::unordered_set<std::string> valid_csr_registers = {
-    "fflags", "frm", "fcsr", "vstart", "vxsat", "vxrm", "vcsr", "vl", "vtype", "vlenb",
+    // "vxsat", "vxrm" and "vcsr": not used, no fixed-point vector instructions yet.
+    "fflags", "frm", "fcsr", "vstart", "vl", "vtype", "vlenb",
 };
 
 const std::unordered_map<std::string, int> csr_to_address{
@@ -229,9 +230,10 @@ const std::unordered_map<std::string, int> csr_to_address{
     {"frm", 0x002},
     {"fcsr", 0x003},
     {"vstart", RegisterFile::CSR_VSTART},
-    {"vxsat", RegisterFile::CSR_VXSAT},
-    {"vxrm", RegisterFile::CSR_VXRM},
-    {"vcsr", RegisterFile::CSR_VCSR},
+    // Not used, no fixed-point vector instructions yet:
+    // {"vxsat", RegisterFile::CSR_VXSAT},
+    // {"vxrm", RegisterFile::CSR_VXRM},
+    // {"vcsr", RegisterFile::CSR_VCSR},
     {"vl", RegisterFile::CSR_VL},
     {"vtype", RegisterFile::CSR_VTYPE},
     {"vlenb", RegisterFile::CSR_VLENB},
@@ -272,7 +274,9 @@ const std::unordered_map<std::string, std::string> reg_alias_to_name = {
 
     {"fflags", "fflags"}, {"frm", "frm"},  {"fcsr", "fcsr"},
 
-    {"vstart", "vstart"}, {"vxsat", "vxsat"}, {"vxrm", "vxrm"}, {"vcsr", "vcsr"},
+    {"vstart", "vstart"},
+    // Not used, no fixed-point vector instructions yet:
+    // {"vxsat", "vxsat"}, {"vxrm", "vxrm"}, {"vcsr", "vcsr"},
     {"vl", "vl"},         {"vtype", "vtype"}, {"vlenb", "vlenb"},
 
 };

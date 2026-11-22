@@ -34,8 +34,8 @@ struct Snapshot
     std::vector<uint8_t> data;
 };
 
-const size_t kCsrs[] = {0x001, 0x002, 0x003, RegisterFile::CSR_VSTART, RegisterFile::CSR_VXSAT,
-                        RegisterFile::CSR_VXRM, RegisterFile::CSR_VL, RegisterFile::CSR_VTYPE};
+const size_t kCsrs[] = {0x001, 0x002, 0x003, RegisterFile::CSR_VSTART, RegisterFile::CSR_VL,
+                        RegisterFile::CSR_VTYPE};
 
 template <typename Vm> Snapshot RunProgram(const std::string &source, Vm *keep = nullptr)
 {
@@ -89,12 +89,12 @@ const char *kCsrProgram = "    li     t0, 3\n"
                           "    li     t0, 0x1f\n"
                           "    csrrs  t4, fflags, t0\n"  // set all flag bits
                           "    csrrc  t5, fflags, t0\n"  // read 0x1f, clear them again
-                          "    csrrwi a0, vxrm, 2\n"
-                          "    csrrsi a1, vxrm, 1\n"     // 2 | 1
-                          "    csrrci a2, vxrm, 2\n"     // 3 & ~2
-                          "    csrrs  a3, vxrm, x0\n"    // 1
-                          "    csrrsi a4, vxsat, 1\n"
-                          "    csrrci a5, vxsat, 0\n"    // uimm 0: read only, no write
+                          "    csrrwi a0, fflags, 2\n"   // fflags is 0 again here
+                          "    csrrsi a1, fflags, 1\n"   // 2 | 1
+                          "    csrrci a2, fflags, 2\n"   // 3 & ~2
+                          "    csrrs  a3, fflags, x0\n"  // 1
+                          "    csrrsi a4, fflags, 4\n"   // 1 | 4
+                          "    csrrci a5, fflags, 0\n"   // uimm 0: read only, no write
                           "    csrrs  a6, fcsr, x0\n"    // plain read (see the reference test)
                           "    vsetivli s0, 4, e32, m1, ta, ma\n"
                           "    csrrs  s1, vl, x0\n"      // vl right after vsetivli: 4
@@ -114,8 +114,9 @@ TEST(Rv5sCsrTest, ReferenceValuesOnTheSingleCycleVm)
     EXPECT_EQ(ref.gprs[7], 10u);    // t2
     EXPECT_EQ(ref.gprs[28], 3u);    // t3: frm
     EXPECT_EQ(ref.gprs[30], 0x1fu); // t5: fflags before the clear
-    EXPECT_EQ(ref.gprs[11], 2u);    // a1: vxrm before |= 1
-    EXPECT_EQ(ref.gprs[13], 1u);    // a3: final vxrm
+    EXPECT_EQ(ref.gprs[11], 2u);    // a1: fflags before |= 1
+    EXPECT_EQ(ref.gprs[13], 1u);    // a3: fflags after the clear
+    EXPECT_EQ(ref.gprs[15], 5u);    // a5: fflags after |= 4; uimm 0 leaves it
     // a6 reads fcsr. The spec defines it as frm << 5 | fflags, but Kites stores fcsr, frm and
     // fflags as separate CSRs, so it is not pinned here; the pipelines only have to match.
     EXPECT_EQ(ref.gprs[9], 4u);     // s1: vl
@@ -171,15 +172,14 @@ TEST(Rv5sCsrTest, UndoRestoresCsrsWrittenInThePipeline)
 {
     Kites::RV5StageProcessorHF vm;
     RunProgram<Kites::RV5StageProcessorHF>(kCsrProgram, &vm);
-    ASSERT_EQ(vm.registers_.ReadCsr(RegisterFile::CSR_VXRM), 1u);
+    ASSERT_EQ(vm.registers_.ReadCsr(0x001), 5u); // fflags
     ASSERT_EQ(vm.registers_.ReadCsr(0x002), 3u);
     for (uint64_t cycles = vm.cycle_s_; cycles > 0; --cycles)
     {
         vm.Undo();
     }
-    EXPECT_EQ(vm.registers_.ReadCsr(RegisterFile::CSR_VXRM), 0u);
+    EXPECT_EQ(vm.registers_.ReadCsr(0x001), 0u); // fflags
     EXPECT_EQ(vm.registers_.ReadCsr(0x002), 0u);
-    EXPECT_EQ(vm.registers_.ReadCsr(RegisterFile::CSR_VXSAT), 0u);
     EXPECT_EQ(vm.registers_.ReadGpr(6), 0u);
 }
 

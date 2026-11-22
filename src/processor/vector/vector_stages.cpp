@@ -20,8 +20,8 @@ void VectorScratch::SyncFrom(const RegisterFile &registers)
     {
         m_file.WriteVectorRegister(reg, registers.ReadVectorRegister(reg));
     }
-    for (const size_t csr : {RegisterFile::CSR_VSTART, RegisterFile::CSR_VXSAT,
-                             RegisterFile::CSR_VXRM, RegisterFile::CSR_VCSR, RegisterFile::CSR_VL,
+    // (vxsat, vxrm and vcsr are commented out: no fixed-point vector instructions yet)
+    for (const size_t csr : {RegisterFile::CSR_VSTART, RegisterFile::CSR_VL,
                              RegisterFile::CSR_VTYPE, RegisterFile::CSR_VLENB})
     {
         m_file.WriteCsr(csr, registers.ReadCsr(csr));

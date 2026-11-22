@@ -49,9 +49,10 @@ class RegisterFile : public QObject
 
     /// Vector CSR addresses (RVV 1.0 spec, section 3).
     static constexpr size_t CSR_VSTART = 0x008;
-    static constexpr size_t CSR_VXSAT = 0x009;
-    static constexpr size_t CSR_VXRM = 0x00A;
-    static constexpr size_t CSR_VCSR = 0x00F;
+    // vxsat, vxrm and vcsr: not used, no fixed-point vector instructions yet.
+    // static constexpr size_t CSR_VXSAT = 0x009;
+    // static constexpr size_t CSR_VXRM = 0x00A;
+    // static constexpr size_t CSR_VCSR = 0x00F;
     static constexpr size_t CSR_VL = 0xC20;
     static constexpr size_t CSR_VTYPE = 0xC21;
     static constexpr size_t CSR_VLENB = 0xC22;
