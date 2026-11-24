@@ -13,7 +13,9 @@ The `examples/` folder holds small assembly programs you can open in the Kites G
 
 1. **File → Open** the `.s` file. It opens in the Editor tab.
 2. Press **Processor** in the toolbar and choose the VM the example asks for.
-3. Press **Step** to advance one clock cycle, or **Run** to run to the end. **Undo** steps back.
+3. Press **Run** to run to the end. To go one clock cycle at a time, press **Run**, then **Pause**, then
+   **Step** (Step stays disabled until a run is paused). To watch it slowly instead, set the delay box next to
+   Run (milliseconds per cycle, e.g. `500`) before pressing Run. **Undo** steps back.
 4. Look at the result in the Processor, Memory, Vector or Cache tab, as the example says.
 
 **On the command line** (build `kites-cli` first; see the README):
@@ -51,7 +53,8 @@ Step through it and you see, in order:
 # Scalar pipeline hazards: one of each kind, to watch in the Pipeline panel.
 #
 # GUI: Processor -> "5 stage Processor w/ hazard detection w/ forwarding", open the panel with
-#      View -> Pipeline Panel (Ctrl+`), then press Step and watch each instruction move through
+#      View -> Pipeline Panel (Ctrl+`). Press Run, then Pause, then Step one cycle at a time (or set
+#      the delay next to Run, e.g. 500 ms, and Run) and watch each instruction move through
 #      IF ID EX MEM WB. A stall shows as a "nop" row; a taken branch turns the three wrongly
 #      fetched instructions into "nop" rows.
 #
@@ -123,7 +126,8 @@ Open the **Vector** tab to see `v1` to `v8` change, each in the cycle its instru
 # in WB. The other pipelines run each vector instruction whole inside EX.
 #
 # GUI: Processor -> "5 stage Processor w/ hazard detection w/ forwarding", open View -> Pipeline
-#      Panel (Ctrl+`), then press Step. On the Processor tab, the wires a vector instruction uses
+#      Panel (Ctrl+`). Press Run, then Pause, then Step one cycle at a time (or set the delay next
+#      to Run, e.g. 500 ms, and Run). On the Processor tab, the wires a vector instruction uses
 #      light up green.
 #
 #   Part  What happens                                    H_F
@@ -222,7 +226,7 @@ VC 4 lines × 16 sectors × 64 B) and `--stats` prints its counters.
 Each step causes one kind of cache event: a line miss, a sector miss, a dirty sector, a scalar
 miss and hit, a migration, a cross-hit, an LRU update and a line eviction with write-back. Set the
 small geometry in the file's header (1 KB L1, 4 sectors per VC line) so evictions happen after a
-few accesses, then Step and compare the Bicameral L1 page with the comment above each instruction.
+few accesses, then press Run, Pause and Step, and compare the Bicameral L1 page with the comment above each instruction.
 
 ```asm
 # Bicameral Cache check: one step per kind of event, so each can be seen in the GUI.

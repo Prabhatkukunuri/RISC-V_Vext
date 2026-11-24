@@ -5,7 +5,8 @@
 # in WB. The other pipelines run each vector instruction whole inside EX.
 #
 # GUI: Processor -> "5 stage Processor w/ hazard detection w/ forwarding", open View -> Pipeline
-#      Panel (Ctrl+`), then press Step. On the Processor tab, the wires a vector instruction uses
+#      Panel (Ctrl+`). Press Run, then Pause, then Step one cycle at a time (or set the delay next
+#      to Run, e.g. 500 ms, and Run). On the Processor tab, the wires a vector instruction uses
 #      light up green.
 #
 #   Part  What happens                                    H_F

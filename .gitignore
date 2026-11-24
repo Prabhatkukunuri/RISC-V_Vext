@@ -25,3 +25,9 @@ gtest_filter.
 gtest_filter.py
 build-gui/
 report/
+
+# macOS Finder metadata
+.DS_Store
+
+# Course report (kept out of the repository)
+Comp_arch_final_report.pdf

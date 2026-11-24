@@ -1,7 +1,8 @@
 # Scalar pipeline hazards: one of each kind, to watch in the Pipeline panel.
 #
 # GUI: Processor -> "5 stage Processor w/ hazard detection w/ forwarding", open the panel with
-#      View -> Pipeline Panel (Ctrl+`), then press Step and watch each instruction move through
+#      View -> Pipeline Panel (Ctrl+`). Press Run, then Pause, then Step one cycle at a time (or set
+#      the delay next to Run, e.g. 500 ms, and Run) and watch each instruction move through
 #      IF ID EX MEM WB. A stall shows as a "nop" row; a taken branch turns the three wrongly
 #      fetched instructions into "nop" rows.
 #
