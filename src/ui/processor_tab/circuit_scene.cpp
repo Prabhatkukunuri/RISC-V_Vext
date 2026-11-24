@@ -166,8 +166,13 @@ void CircuitScene::updateCircuitState(const QList<QString> &wireList)
         WireItem *wire = dynamic_cast<WireItem *>(item);
         if (wire)
         {
-            // Update the wire's state based on the wireList
-            if (wireList.contains(wire->getName()))
+            // Update the wire's state based on the wireList. "V:<name>" marks a wire a vector
+            // instruction is using: it is drawn green instead of yellow.
+            if (wireList.contains(QStringLiteral("V:") + wire->getName()))
+            {
+                wire->setVectorActive();
+            }
+            else if (wireList.contains(wire->getName()))
             {
                 wire->setActive(true); // Example: set active if in the list
             }

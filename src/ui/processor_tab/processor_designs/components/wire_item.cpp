@@ -8,6 +8,7 @@ WireItem::WireItem(const QPainterPath &path, QGraphicsItem *parent)
 {
     // setFlag(QGraphicsItem::ItemIsMovable, true);
     m_activePen = QPen(Qt::yellow, 2, Qt::SolidLine);
+    m_vectorActivePen = QPen(QColor(0x3d, 0xdc, 0x84), 2, Qt::SolidLine); // green
     m_inactivePen = QPen(Qt::gray, 1, Qt::SolidLine);
     setPen(m_inactivePen);
 }
@@ -32,6 +33,11 @@ void WireItem::setActive(bool isActive)
     {
         setPen(m_inactivePen);
     }
+}
+
+void WireItem::setVectorActive()
+{
+    setPen(m_vectorActivePen);
 }
 QRectF WireItem::boundingRect() const
 {

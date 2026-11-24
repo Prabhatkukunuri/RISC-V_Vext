@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 #include "processor/processor_constants.h"
 namespace Kites
 {
@@ -70,9 +71,18 @@ struct ID_EX_Register
 
     uint8_t alu_op {0};      // Hint for the ALU Control Unit
 
+    // --- Vector control (set in Decode). vd/vs1/vs2 are the rd/rs1/rs2 fields above: the vector
+    // register numbers sit in the same instruction bits, so they need no fields of their own.
+    bool is_vector  {false};  // unit select: EX sends the instruction to the vector unit
+    bool vreg_write {false};  // writes vector register(s)
+    bool vcsr_write {false};  // writes vl/vtype (vset*, vle*ff)
+    bool vmem_read  {false};  // vector load
+    bool vmem_write {false};  // vector store
+
     void reset()
     {
           // Resetting injects a "bubble"
+        is_vector = vreg_write = vcsr_write = vmem_read = vmem_write = false;
         pc         = INVALID_PC;
         reg1_data  = reg2_data  = imm        = rs1  = rs2  = rd   = 0;
         freg1_data = freg2_data = freg3_data = frs1 = frs2 = frs3 = frd = 0;
@@ -117,10 +127,32 @@ struct EX_MEM_Register
     bool prev_mem_read  {false};  // Previous mem_read signal (for highlighting purposes)
     bool prev_mem_write {false};  // Previous mem_write signal (for highlighting purposes)
 
+    // --- Vector (H_F only). For a vector load/store alu_result holds the base address and
+    // reg2_data the stride; for vset* alu_result is the new vl (it is also rd's value).
+    bool is_vector  {false};
+    bool vreg_write {false};
+    bool vcsr_write {false};
+    bool vmem_read  {false};
+    bool vmem_write {false};
+    uint8_t v_wcount {0};          // registers written from rd (= vd) on: the forwarding key
+    std::vector<uint8_t> v_data;   // the written group, v_wcount * VLEN/8 bytes (EX result)
+    uint64_t v_vtype {0};          // new vtype of a vset*
+
+    // --- Zicsr (H_F only): the CSR write happens in WB. The CSR number is instruction[31:20].
+    bool     csr_write {false};
+    uint64_t csr_wdata {0};
+
     void reset()
     {
         pc          = INVALID_PC;
         instruction = NOP;
+
+        is_vector = vreg_write = vcsr_write = vmem_read = vmem_write = false;
+        v_wcount  = 0;
+        v_data.clear();
+        v_vtype   = 0;
+        csr_write = false;
+        csr_wdata = 0;
 
         alu_result = 0;
         reg2_data  = 0;
@@ -177,10 +209,30 @@ struct MEM_WB_Register
     bool prev_mem_to_reg {false};  // Previous mem_to_reg signal (for forwarding)
     bool prev_reg_write  {false};  // Previous reg_write signal (for forwarding)
     bool prev_freg_write {false};  // Previous FPR write enable (for forwarding)
+
+    // --- Vector (H_F only). For a vle*ff, memory_data holds the (possibly trimmed) vl.
+    bool is_vector  {false};
+    bool vreg_write {false};
+    bool vcsr_write {false};
+    uint8_t v_wcount {0};
+    std::vector<uint8_t> v_data;   // the group to write: the EX result, or the loaded group
+    uint64_t v_vtype {0};
+
+    // --- Zicsr (H_F only)
+    bool     csr_write {false};
+    uint64_t csr_wdata {0};
+
     void reset()
     {
         pc          = INVALID_PC;
         instruction = NOP;
+
+        is_vector = vreg_write = vcsr_write = false;
+        v_wcount  = 0;
+        v_data.clear();
+        v_vtype   = 0;
+        csr_write = false;
+        csr_wdata = 0;
 
         memory_data = 0;
         alu_result  = 0;

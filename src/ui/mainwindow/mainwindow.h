@@ -10,6 +10,12 @@
 #include <QThread>
 #include <QWidget>
 
+class QSplitter;
+namespace Kites
+{
+class PipelinePanel;
+}
+
 namespace Kites
 {
 QT_BEGIN_NAMESPACE
@@ -64,6 +70,10 @@ private:
     // QToolBar *m_mainToolbar = nullptr;
     QListWidget       *m_sidebar           {nullptr};
     QStackedWidget    *m_stackedTabs       {nullptr};
+    // VS Code-style bottom panel with the pipeline diagram, under the tabs
+    PipelinePanel     *m_pipelinePanel     {nullptr};
+    QSplitter         *m_panelSplitter     {nullptr};
+    int                m_panelHeight       {240};
     RegisterContainer *m_registerContainer {nullptr};
     ProcessorManager  *m_processorManager  {nullptr};
     QThread           *m_processorThread   {nullptr};

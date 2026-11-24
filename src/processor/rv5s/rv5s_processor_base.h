@@ -3,6 +3,7 @@
 #include "processor/processor_base.h"
 #include "processor/processor_manager.h"
 #include "processor/vector/vector_execute.h"
+#include "processor/vector/vector_stages.h"
 #include "rv5s_control_unit.h"
 
 namespace Kites
@@ -110,6 +111,21 @@ class RV5StageVM_Base : public ProcessorBase
     void pipeline_writeback();
     void pipeline_writeback_float();
     void pipeline_writeback_double();
+
+    // --- Pipelined vector instructions and WB-stage CSR writes. Only H_F sets the EX/MEM
+    // fields that enable these (is_vector, csr_write), so the other variants never reach them.
+
+    /// MEM of a vector load/store: generates the element addresses (reading vs3, the index
+    /// group, v0, vl and vtype from the register file, which every older instruction has
+    /// written by now), performs the accesses and, for a load, builds the destination group.
+    void pipeline_memory_vector();
+    /// WB of a vector instruction: the destination group, vl/vtype, vstart = 0.
+    void pipeline_writeback_vector();
+    /// WB of a Zicsr instruction: the CSR write.
+    void pipeline_writeback_csr();
+
+    /// Scratch copy of the vector state, used to build a loaded group in MEM.
+    rvv::VectorScratch mem_vector_scratch_;
 
     // --- Specialized handler functions (called from pipeline stages) ---
     virtual void handle_syscall() = 0;

@@ -1,6 +1,8 @@
 #include "common/debug_colors.h"
 #include "common/instructions.h"
 #include "processor/rv5s/rv5s_processor_base.h"
+#include "processor/vector/vector_operands.h"
+#include <algorithm>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -200,6 +202,12 @@ void RV5StageVM_Base::pipeline_decode()
         id_ex_reg_.mem_write  = false;
         id_ex_reg_.mem_to_reg = false;
         id_ex_reg_.alu_op     = 0;
+
+        id_ex_reg_.is_vector  = false;
+        id_ex_reg_.vreg_write = false;
+        id_ex_reg_.vcsr_write = false;
+        id_ex_reg_.vmem_read  = false;
+        id_ex_reg_.vmem_write = false;
         return;
     }
     // Control Unit: Generate signals based on the instruction
@@ -250,6 +258,24 @@ void RV5StageVM_Base::pipeline_decode()
     id_ex_reg_.mem_write  = control_unit_.GetMemWrite();
     id_ex_reg_.mem_to_reg = control_unit_.GetMemToReg();
     id_ex_reg_.alu_op     = control_unit_.GetAluOp();
+
+    // Vector control. Only H_F carries these past EX; the other variants run a vector
+    // instruction whole in EX and ignore them.
+    id_ex_reg_.is_vector = rvv::IsVectorInstruction(instruction);
+    if (id_ex_reg_.is_vector)
+    {
+        const rvv::VectorRegisterUse use = rvv::DecodeVectorRegisterUse(
+            instruction, registers_.ReadCsr(RegisterFile::CSR_VTYPE));
+        id_ex_reg_.vreg_write = use.writeCount > 0;
+        id_ex_reg_.vcsr_write = use.writesVlVtype;
+        id_ex_reg_.vmem_read  = use.isLoad;
+        id_ex_reg_.vmem_write = use.isStore;
+    }
+    else
+    {
+        id_ex_reg_.vreg_write = id_ex_reg_.vcsr_write = false;
+        id_ex_reg_.vmem_read = id_ex_reg_.vmem_write = false;
+    }
 }
 
 void RV5StageVM_Base::memory_writeback()
@@ -467,6 +493,20 @@ void RV5StageVM_Base::pipeline_memory()
     mem_wb_reg_.frd          = ex_mem_reg_.frd;
     mem_wb_reg_.f_alu_result = ex_mem_reg_.f_alu_result;
     mem_wb_reg_.freg_write   = ex_mem_reg_.freg_write;
+    // Vector and Zicsr fields (only H_F sets them). v_data is copied, not moved: EX still
+    // reads EX/MEM for its bypass later in this step.
+    mem_wb_reg_.is_vector  = ex_mem_reg_.is_vector;
+    mem_wb_reg_.vreg_write = ex_mem_reg_.vreg_write;
+    mem_wb_reg_.vcsr_write = ex_mem_reg_.vcsr_write;
+    mem_wb_reg_.v_wcount   = ex_mem_reg_.v_wcount;
+    mem_wb_reg_.v_data     = ex_mem_reg_.v_data;
+    mem_wb_reg_.v_vtype    = ex_mem_reg_.v_vtype;
+    mem_wb_reg_.csr_write  = ex_mem_reg_.csr_write;
+    mem_wb_reg_.csr_wdata  = ex_mem_reg_.csr_wdata;
+    if (ex_mem_reg_.is_vector && (ex_mem_reg_.vmem_read || ex_mem_reg_.vmem_write))
+    {
+        pipeline_memory_vector();
+    }
 
     bool is_F_Instruction = instruction_set::isFInstruction(mem_wb_reg_.instruction);
     bool is_D_Instruction = instruction_set::isDInstruction(mem_wb_reg_.instruction);
@@ -587,6 +627,15 @@ void RV5StageVM_Base::pipeline_writeback()
     if (mem_wb_reg_.pc != INVALID_PC)
     {
         instructions_retired_++;
+    }
+
+    if (mem_wb_reg_.is_vector)
+    {
+        pipeline_writeback_vector();
+    }
+    if (mem_wb_reg_.csr_write)
+    {
+        pipeline_writeback_csr();
     }
 
     if (!mem_wb_reg_.reg_write && !mem_wb_reg_.freg_write)
@@ -808,6 +857,109 @@ uint64_t RV5StageVM_Base::execute_vector(uint32_t instruction, uint64_t rs1_valu
                                          memory_controller_, current_delta_.register_changes,
                                          current_delta_.memory_changes)
         .rdValue;
+}
+
+void RV5StageVM_Base::pipeline_memory_vector()
+{
+    const uint32_t instruction = ex_mem_reg_.instruction;
+    // EX latched the forwarded base address in alu_result and x[rs2] (the stride) in reg2_data.
+    const rvv::VectorMemPlan plan = rvv::PlanVectorMemory(instruction, ex_mem_reg_.alu_result,
+                                                          ex_mem_reg_.reg2_data, registers_);
+    const rvv::VectorMemData data =
+        rvv::AccessVectorMemory(plan, memory_controller_, current_delta_.memory_changes);
+    if (!ex_mem_reg_.vmem_read)
+    {
+        return; // a store is complete: memory was written above
+    }
+
+    // Build the destination group as it will look after this load: the old vd (tail and
+    // masked-off elements stay undisturbed) with the loaded elements merged in.
+    mem_vector_scratch_.SyncFrom(registers_);
+    std::vector<RegisterChange> loaded;
+    rvv::WriteBackVectorMemory(plan, data, mem_vector_scratch_.File(), loaded);
+
+    // The group WB writes: the decoded one, widened to every register the load changed.
+    uint32_t first = ex_mem_reg_.rd;
+    uint32_t last = first + ex_mem_reg_.v_wcount; // exclusive
+    for (const RegisterChange &change : loaded)
+    {
+        if (change.reg_type == 3)
+        {
+            first = std::min<uint32_t>(first, change.reg_index);
+            last = std::max<uint32_t>(last, change.reg_index + 1);
+        }
+    }
+    mem_wb_reg_.rd = static_cast<uint8_t>(first);
+    mem_wb_reg_.v_wcount = static_cast<uint8_t>(last - first);
+    mem_wb_reg_.v_data.clear();
+    for (uint32_t reg = first; reg < last; ++reg)
+    {
+        const std::vector<uint8_t> bytes = mem_vector_scratch_.File().ReadVectorRegister(reg);
+        mem_wb_reg_.v_data.insert(mem_wb_reg_.v_data.end(), bytes.begin(), bytes.end());
+    }
+    mem_wb_reg_.memory_data = data.newVl; // vl after a fault-only-first load trimmed it
+}
+
+namespace
+{
+void WriteCsrRecorded(RegisterFile &registers, size_t csr, uint64_t value,
+                      std::vector<RegisterChange> &changes)
+{
+    const uint64_t old_value = registers.ReadCsr(csr);
+    registers.WriteCsr(csr, value);
+    const uint64_t written = registers.ReadCsr(csr);
+    if (written != old_value)
+    {
+        changes.push_back({static_cast<unsigned int>(csr), 1, old_value, written});
+    }
+}
+} // namespace
+
+void RV5StageVM_Base::pipeline_writeback_vector()
+{
+    auto &changes = current_delta_.register_changes;
+    if (mem_wb_reg_.vreg_write)
+    {
+        const size_t vlen_bytes = registers_.GetVlenBytes();
+        if (mem_wb_reg_.v_data.size() == mem_wb_reg_.v_wcount * vlen_bytes)
+        {
+            for (size_t i = 0; i < mem_wb_reg_.v_wcount; ++i)
+            {
+                const size_t reg = mem_wb_reg_.rd + i;
+                const auto begin = mem_wb_reg_.v_data.begin() + i * vlen_bytes;
+                std::vector<uint8_t> new_bytes(begin, begin + vlen_bytes);
+                std::vector<uint8_t> old_bytes = registers_.ReadVectorRegister(reg);
+                if (new_bytes != old_bytes)
+                {
+                    registers_.WriteVectorRegister(reg, new_bytes);
+                    RegisterChange change{static_cast<unsigned int>(reg), 3, 0, 0};
+                    change.old_bytes = std::move(old_bytes);
+                    change.new_bytes = std::move(new_bytes);
+                    changes.push_back(std::move(change));
+                }
+            }
+        }
+    }
+    if (mem_wb_reg_.vcsr_write)
+    {
+        if ((mem_wb_reg_.instruction & 0x7F) == rvv::OPCODE_OP_V) // vset*: vl rides in alu_result
+        {
+            WriteCsrRecorded(registers_, RegisterFile::CSR_VL, mem_wb_reg_.alu_result, changes);
+            WriteCsrRecorded(registers_, RegisterFile::CSR_VTYPE, mem_wb_reg_.v_vtype, changes);
+        }
+        else // vle*ff: the (possibly trimmed) vl rides in memory_data
+        {
+            WriteCsrRecorded(registers_, RegisterFile::CSR_VL, mem_wb_reg_.memory_data, changes);
+        }
+    }
+    // Every vector instruction leaves vstart = 0.
+    WriteCsrRecorded(registers_, RegisterFile::CSR_VSTART, 0, changes);
+}
+
+void RV5StageVM_Base::pipeline_writeback_csr()
+{
+    const size_t csr = (mem_wb_reg_.instruction >> 20) & 0xFFF;
+    WriteCsrRecorded(registers_, csr, mem_wb_reg_.csr_wdata, current_delta_.register_changes);
 }
 
 uint64_t RV5StageVM_Base::execute_float()

@@ -15,7 +15,12 @@
 #include "processor/alu.h"
 #include "processor/pipeline_registers.h"
 #include "processor/processor_base.h"
+#include "processor/registers.h"
+#include "processor/rv5s/rv5s_hdu_vector.h"
+#include "processor/vector/vector_operands.h"
 #include <algorithm>
+#include <sstream>
+#include <stdexcept>
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -78,12 +83,14 @@ RV5StageProcessorHF::RV5StageProcessorHF() : RV5StageVM_Base()
     active_wires_.append("P2_to_ALUcontrol_Control");
 
     always_active_wires_count_ = active_wires_.size();
+    always_active_wires_ = active_wires_;
 }
 
 void RV5StageProcessorHF::SetActiveWireNames()
 {
     // Clear and populate canonical wires for the Hazard+Forwarding (H_F) circuit
-    active_wires_.resize(always_active_wires_count_);
+    // (a saved copy: the green pass below reorders the list, so its prefix can't be reused)
+    active_wires_ = always_active_wires_;
     // Backbone / always-visible wires (names sourced from H_F_Processor.json)
 
     // Immediate / ALU source selection
@@ -177,6 +184,8 @@ void RV5StageProcessorHF::SetActiveWireNames()
         active_wires_.append("HDU_to_HDU_mUX");
     }
 
+    markVectorWires();
+
     // Preserve ordering while removing duplicates
     QList<QString> uniqueList;
     QSet<QString> seen;
@@ -193,6 +202,85 @@ void RV5StageProcessorHF::SetActiveWireNames()
     // The scene will read `active_wires_` when `updateCircuitStateSignal` is emitted by callers.
 }
 
+void RV5StageProcessorHF::markVectorWires()
+{
+    // Wires of each stage, as the scalar highlighting above assigns them: IF = IF/ID, ID = ID/EX,
+    // EX = EX/MEM, MEM = MEM/WB, WB = the instruction written back this cycle.
+    static const QStringList kIf = {"PC_to_IM", "IM_to_P1", "PCMux_to_PC", "ALU1_to_PCMuxUp"};
+    static const QStringList kId = {"P1_to_Control_RF_andall", "RF_to_P2_UP", "RFdown_to_P2",
+                                    "P1_to_P2_PCcarry", "Control_ControlMux",
+                                    "HDUMux_to_P2_upper"};
+    static const QStringList kEx = {"P2_to_FMUX",          "P2_to_FMUX2_UP",
+                                    "Fmux1_to_ALU",        "Fmux_to_ALUMux_up",
+                                    "AKUMux_to_ALU",       "P2_to_ALUMux",
+                                    "P2_to_ALUControl",    "P2_to_ALUcontrol_Control",
+                                    "ALUcontrol_to_ALU",   "ALU_to_P3",
+                                    "rd_P2_to_P3",         "P2_to_P3_WBcontrol"};
+    static const QStringList kExMemory = {"P2_to_P3_MEMControl", "FMUX3_bottommostinput"};
+    static const QStringList kForward = {"P2_to_FDU_rs1",      "P2_to_FDU_RS2",
+                                         "P4EB_to_FWD_unit",   "FDU_to_FMUX1_cntrl",
+                                         "FDU_to_fMUX2",       "FDU_to_FMUX3",
+                                         "P3ALUres_to_DMup"};
+    static const QStringList kMem = {"rd_P3_to_P4", "P3_to_P4_WBcontrol", "P3ALUres_to_DMup"};
+    static const QStringList kMemLoad = {"DMMux_to_DM", "P3_to_DM_Memread", "DM_to_P4"};
+    static const QStringList kMemStore = {"DMMux_to_DM", "P3_TO_DM_control_memwrite"};
+    static const QStringList kWb = {"P4_wbcontrol_to_WBmux", "WBMux_to_RF",
+                                    "P4_to_RF_regwritecontrol", "RdP4_to_FU"};
+    static const QStringList kHdu = {"HDU_to_P1", "HDUMux_to_P2", "HDU_mux_lowest_toP2",
+                                     "HDU_to_HDU_mUX", "HDU_to_PCWrite"};
+
+    QSet<QString> green;
+    const auto add = [&green](const QStringList &wires)
+    {
+        for (const QString &wire : wires)
+            green.insert(wire);
+    };
+
+    if (rvv::IsVectorInstruction(if_id_reg_.instruction))
+        add(kIf);
+    if (id_ex_reg_.is_vector)
+        add(kId);
+    if (ex_mem_reg_.is_vector)
+    {
+        add(kEx);
+        if (ex_mem_reg_.vmem_read || ex_mem_reg_.vmem_write)
+            add(kExMemory);
+        if (vector_forwarded_)
+            add(kForward);
+    }
+    if (mem_wb_reg_.is_vector)
+    {
+        add(kMem);
+        const uint32_t opcode = mem_wb_reg_.instruction & 0x7F;
+        if (opcode == rvv::OPCODE_LOAD_FP)
+            add(kMemLoad);
+        else if (opcode == rvv::OPCODE_STORE_FP)
+            add(kMemStore);
+    }
+    if (wb_vector_)
+    {
+        add(kWb);
+        // a loaded group comes from the memory side of the WB mux, anything else from the ALU side
+        add({wb_vector_load_ ? QStringLiteral("P4DM_to_lastMux")
+                             : QStringLiteral("P4ALU_to_WBMuxDown")});
+    }
+    if (vector_stall_)
+        add(kHdu);
+
+    if (green.isEmpty())
+        return;
+    // A green wire replaces its yellow entry.
+    QList<QString> marked;
+    for (const QString &wire : active_wires_)
+    {
+        if (!green.contains(wire))
+            marked.append(wire);
+    }
+    for (const QString &wire : green)
+        marked.append(QStringLiteral("V:") + wire);
+    active_wires_ = marked;
+}
+
 void RV5StageProcessorHF::Reset()
 {
     RV5StageVM_Base::Reset();
@@ -204,6 +292,9 @@ void RV5StageProcessorHF::Step()
     begin_step_delta();
 
     // 1. Execute back stages (WB -> MEM -> EX)
+    wb_vector_ = mem_wb_reg_.is_vector;
+    wb_vector_load_ = wb_vector_ && (mem_wb_reg_.instruction & 0x7F) == rvv::OPCODE_LOAD_FP;
+    vector_stall_ = false;
     pipeline_writeback();
     pipeline_memory();
     pipeline_execute();
@@ -222,8 +313,17 @@ void RV5StageProcessorHF::Step()
     else
     {
         // Pipeline is free. Check for a NEW hazard using the external HDU function.
-        stalls_needed = check_data_hazard(if_id_reg_, id_ex_reg_, ex_mem_reg_,
-                                          true /* is_forwarding_enabled */);
+        // A vector consumer is checked by hdu_vector alone: the generic HDU would treat its
+        // vs1/vs2 fields as GPRs. hdu_vector also covers the CSR stalls of scalar consumers.
+        if (!rvv::IsVectorInstruction(if_id_reg_.instruction))
+        {
+            stalls_needed = check_data_hazard(if_id_reg_, id_ex_reg_, ex_mem_reg_,
+                                              true /* is_forwarding_enabled */);
+        }
+        const int vector_stalls =
+            check_vector_hazard(if_id_reg_, ex_mem_reg_, mem_wb_reg_, registers_);
+        vector_stall_ = vector_stalls > stalls_needed;
+        stalls_needed = std::max(stalls_needed, vector_stalls);
         if (stalls_needed > 0)
         {
             // Start the stall: stalls_needed cycles total. 1 cycle is handled now.
@@ -281,6 +381,8 @@ void RV5StageProcessorHF::pipeline_execute()
     uint32_t instruction = id_ex_reg_.instruction;
     bool overflow;
     uint64_t alu_result;
+    ex_vector_ = ExResultVector{};
+    vector_forwarded_ = false;
 
     bool is_f_instruction = instruction_set::isFInstruction(instruction);
     bool is_d_instruction = instruction_set::isDInstruction(instruction);
@@ -356,15 +458,19 @@ void RV5StageProcessorHF::pipeline_execute()
         // --- EXECUTION ---
         alu::AluOp alu_operation = control_unit_.GetAluSignal(instruction, id_ex_reg_.alu_op > 0);
         std::tie(alu_result, overflow) = alu::Alu::execute(alu_operation, alu_in1, alu_in2);
-        if (rvv::IsVectorInstruction(instruction))
+        if (id_ex_reg_.is_vector)
         {
             // alu_in1/alu_in2 hold x[rs1]/x[rs2] after forwarding: the AVL/vtype of vset*, the
             // scalar of .vx, or the base address/stride of a vector load/store.
-            alu_result = execute_vector(instruction, alu_in1, alu_in2);
+            alu_result = pipeline_execute_vector(alu_in1, alu_in2);
         }
 
-        // CSR instructions produce their result outside the ALU.
-        alu_result = special_execute_result(instruction, alu_result, alu_in1);
+        // CSR instructions produce their result outside the ALU. The CSR itself is written
+        // in WB.
+        if ((instruction & 0x7F) == 0b1110011 && ((instruction >> 12) & 0x7) != 0)
+        {
+            alu_result = pipeline_execute_csr(instruction, alu_in1);
+        }
 
         // temporary fix for lui instruction
         if ((id_ex_reg_.instruction & 0b1111111) == 0b0110111) // lui
@@ -417,6 +523,22 @@ void RV5StageProcessorHF::pipeline_execute()
     ex_mem_reg_.prev_branch_taken = ex_mem_reg_.branch_taken;
     ex_mem_reg_.branch_taken = false;
     ex_mem_reg_.branch_target_pc = 0;
+
+    // Vector and Zicsr fields
+    ex_mem_reg_.is_vector = id_ex_reg_.is_vector;
+    ex_mem_reg_.vmem_read = id_ex_reg_.vmem_read;
+    ex_mem_reg_.vmem_write = id_ex_reg_.vmem_write;
+    ex_mem_reg_.vcsr_write = id_ex_reg_.vcsr_write;
+    ex_mem_reg_.vreg_write = id_ex_reg_.is_vector && !id_ex_reg_.vmem_write && ex_vector_.count > 0;
+    ex_mem_reg_.v_wcount = ex_vector_.count;
+    ex_mem_reg_.v_data = std::move(ex_vector_.data);
+    ex_mem_reg_.v_vtype = ex_vector_.vtype;
+    if (ex_mem_reg_.vreg_write)
+    {
+        ex_mem_reg_.rd = ex_vector_.base; // vd (rd's bits); vector ops never also write x[rd]
+    }
+    ex_mem_reg_.csr_write = ex_vector_.csr_write;
+    ex_mem_reg_.csr_wdata = ex_vector_.csr_wdata;
 
     uint8_t opcode = instruction & 0b1111111;
 
@@ -474,6 +596,176 @@ void RV5StageProcessorHF::pipeline_execute()
         if_id_reg_.reset();
         ex_mem_reg_.branch_taken = true;
     }
+}
+
+namespace
+{
+bool IsVsetWord(uint32_t instruction)
+{
+    return (instruction & 0x7F) == rvv::OPCODE_OP_V &&
+           ((instruction >> 12) & 0x7) == rvv::FUNCT3_OPCFG;
+}
+
+uint32_t CsrNumberOf(uint32_t instruction)
+{
+    return (instruction >> 20) & 0xFFF;
+}
+} // namespace
+
+uint64_t RV5StageProcessorHF::pipeline_execute_vector(uint64_t rs1, uint64_t rs2)
+{
+    const uint32_t instruction = id_ex_reg_.instruction;
+
+    // --- Vector CSRs, through the bypass. The instruction in EX/MEM (one ahead) has not
+    // written back yet; the one two ahead already has (WB runs first in Step()).
+    uint64_t vl = registers_.ReadCsr(RegisterFile::CSR_VL);
+    uint64_t vtype = registers_.ReadCsr(RegisterFile::CSR_VTYPE);
+    uint64_t vstart = registers_.ReadCsr(RegisterFile::CSR_VSTART);
+    if (ex_mem_reg_.is_vector)
+    {
+        vstart = 0; // every vector instruction leaves vstart = 0
+        if (ex_mem_reg_.vcsr_write && IsVsetWord(ex_mem_reg_.instruction))
+        {
+            vl = ex_mem_reg_.alu_result;
+            vtype = ex_mem_reg_.v_vtype;
+        }
+        // (a vle*ff's vl is known only after MEM: hdu_vector stalls its readers instead)
+    }
+    else if (ex_mem_reg_.csr_write && CsrNumberOf(ex_mem_reg_.instruction) == RegisterFile::CSR_VSTART)
+    {
+        vstart = ex_mem_reg_.csr_wdata; // csrw vstart one ahead
+    }
+
+    const rvv::VectorRegisterUse use = rvv::DecodeVectorRegisterUse(instruction, vtype);
+
+    if (use.isMemory)
+    {
+        // Address generation and the accesses happen in MEM. EX only passes on the forwarded
+        // base (alu_result) and stride (reg2_data, latched by the caller), and the destination
+        // group for the forwarding key / hazard unit.
+        ex_vector_.base = use.writeBase;
+        ex_vector_.count = use.writeCount;
+        return rs1;
+    }
+
+    // --- Vector operand read: the register file, overlaid with the EX/MEM bypass.
+    ex_vector_scratch_.SyncFrom(registers_);
+    RegisterFile &operands = ex_vector_scratch_.File();
+    operands.WriteCsr(RegisterFile::CSR_VL, vl);
+    operands.WriteCsr(RegisterFile::CSR_VTYPE, vtype);
+    operands.WriteCsr(RegisterFile::CSR_VSTART, vstart);
+
+    const size_t vlen_bytes = registers_.GetVlenBytes();
+    if (ex_mem_reg_.vreg_write && ex_mem_reg_.v_data.size() == ex_mem_reg_.v_wcount * vlen_bytes)
+    {
+        // Forwarding unit: the bypass is selected for the registers the producer writes.
+        const uint32_t produced = rvv::VectorGroupMask(ex_mem_reg_.rd, ex_mem_reg_.v_wcount);
+        vector_forwarded_ = (use.exReads & produced) != 0;
+        for (size_t i = 0; i < ex_mem_reg_.v_wcount; ++i)
+        {
+            const auto begin = ex_mem_reg_.v_data.begin() + i * vlen_bytes;
+            operands.WriteVectorRegister(ex_mem_reg_.rd + i,
+                                         std::vector<uint8_t>(begin, begin + vlen_bytes));
+        }
+    }
+
+    // --- Execute (the result lands in the operand file).
+    std::vector<RegisterChange> changes;
+    const rvv::VectorExecResult result =
+        rvv::ExecuteVectorCompute(instruction, rs1, rs2, operands, changes);
+
+    if (use.isVset)
+    {
+        ex_vector_.vtype = operands.ReadCsr(RegisterFile::CSR_VTYPE);
+        return operands.ReadCsr(RegisterFile::CSR_VL); // the new vl (also rd's value)
+    }
+
+    // --- The destination group: the decoded one, widened to every register that changed.
+    uint32_t first = use.writeBase;
+    uint32_t last = use.writeBase + use.writeCount; // exclusive
+    if (use.writeCount == 0)
+    {
+        first = 32;
+        last = 0;
+    }
+    for (const RegisterChange &change : changes)
+    {
+        if (change.reg_type == 3)
+        {
+            first = std::min<uint32_t>(first, change.reg_index);
+            last = std::max<uint32_t>(last, change.reg_index + 1);
+        }
+    }
+    if (first < last)
+    {
+        ex_vector_.base = static_cast<uint8_t>(first);
+        ex_vector_.count = static_cast<uint8_t>(last - first);
+        ex_vector_.data.reserve(ex_vector_.count * vlen_bytes);
+        for (uint32_t reg = first; reg < last; ++reg)
+        {
+            const std::vector<uint8_t> bytes = operands.ReadVectorRegister(reg);
+            ex_vector_.data.insert(ex_vector_.data.end(), bytes.begin(), bytes.end());
+        }
+    }
+    return result.rdValue;
+}
+
+uint64_t RV5StageProcessorHF::pipeline_execute_csr(uint32_t instruction, uint64_t rs1_value)
+{
+    const uint8_t funct3 = (instruction >> 12) & 0x7;
+    const uint8_t rs1 = (instruction >> 15) & 0x1F;
+    const uint32_t csr = CsrNumberOf(instruction);
+
+    // --- CSR read through the bypass (the instruction one ahead writes back next cycle).
+    uint64_t old_value = registers_.ReadCsr(csr);
+    if (ex_mem_reg_.csr_write && CsrNumberOf(ex_mem_reg_.instruction) == csr)
+    {
+        old_value = ex_mem_reg_.csr_wdata;
+    }
+    else if (ex_mem_reg_.is_vector)
+    {
+        if (csr == RegisterFile::CSR_VSTART)
+        {
+            old_value = 0;
+        }
+        else if (ex_mem_reg_.vcsr_write && IsVsetWord(ex_mem_reg_.instruction))
+        {
+            if (csr == RegisterFile::CSR_VL)
+                old_value = ex_mem_reg_.alu_result;
+            else if (csr == RegisterFile::CSR_VTYPE)
+                old_value = ex_mem_reg_.v_vtype;
+        }
+    }
+
+    const uint64_t operand = (funct3 & 0b100) ? rs1 : rs1_value; // csrr*i: zero-extended uimm
+    uint64_t new_value = old_value;
+    bool writes = false;
+    switch (funct3 & 0b011)
+    {
+    case 0b01: // csrrw / csrrwi: always write
+        new_value = operand;
+        writes = true;
+        break;
+    case 0b10: // csrrs / csrrsi: set bits, write only if there are any
+        new_value = old_value | operand;
+        writes = operand != 0;
+        break;
+    case 0b11: // csrrc / csrrci: clear bits
+        new_value = old_value & ~operand;
+        writes = operand != 0;
+        break;
+    default:
+        return old_value;
+    }
+    if (writes && IsReadOnlyCsr(csr))
+    {
+        std::ostringstream message;
+        message << "Illegal instruction: write to read-only CSR 0x" << std::hex << csr;
+        throw std::runtime_error(message.str());
+    }
+    ex_vector_.csr_write = writes;
+    ex_vector_.csr_wdata = new_value;
+    return old_value;
 }
 
 void RV5StageProcessorHF::handle_syscall()

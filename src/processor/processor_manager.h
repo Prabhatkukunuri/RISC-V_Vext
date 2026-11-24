@@ -12,6 +12,7 @@
 #include "profiler/profiler.h"
 #include "ui/processor_tab/circuit_scene.h"
 #include "processor_state.h"
+#include "processor/pipeline_snapshot.h"
 #include <QObject>
 #include <memory>
 #include <sstream>
@@ -74,6 +75,11 @@ private:
     // or -1 if it isn't in the current program's mapping.
     int resolveCurrentSourceLine() const;
 
+    /// Builds m_instructionTexts from m_currentProgram and tells the pipeline view to start over.
+    void programChanged();
+    /// The disassembly of every instruction of the current program, by instruction number.
+    std::vector<std::string> m_instructionTexts;
+
     AssembledProgram m_currentProgram{};
     std::unique_ptr<ProcessorBase> m_currentProcessor{};
     ProcessorType m_currentProcessorType;
@@ -90,6 +96,10 @@ signals:
     void runFinishedSignal();
     void processorStateChangedSignal();
     void processorPausedAtBreakpointSignal();
+    /// One clock cycle of a 5-stage VM, for the pipeline view (not sent for the single-cycle VM).
+    void pipelineSnapshotSignal(const Kites::PipelineSnapshot &snapshot);
+    /// The pipeline view must clear its history: reset, new program or another VM.
+    void pipelineResetSignal(bool isPipelined);
     // sourceLine is 1-based, or -1 if the failing PC couldn't be mapped back to a source line.
     void runErrorSignal(const QString &errorMessage, int sourceLine);
     void updateDisassemblySignal(const QString &disassemblyText);

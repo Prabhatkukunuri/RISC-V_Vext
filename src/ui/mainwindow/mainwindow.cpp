@@ -13,6 +13,7 @@
 #include "ui/processor_tab/processortab.h"
 #include "ui/profiler_tab/profilertab.h"
 #include "ui/vector_tab/vectortab.h"
+#include "ui/pipeline_panel/pipeline_panel.h"
 #include "ui/theme/icon_manager.h"
 #include "ui_mainwindow.h"
 #include "utils/utils.h"
@@ -23,6 +24,7 @@
 #include <QSpinBox>
 #include <QWidgetAction>
 #include <QSplitter>
+#include <QScrollArea>
 #include <QMessageBox>
 
 namespace Kites
@@ -50,6 +52,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     QSplitter *splitter = new QSplitter(Qt::Horizontal, this);
 
     m_stackedTabs = new QStackedWidget(this);
+    m_pipelinePanel = new PipelinePanel(this);
     m_sidebar = new QListWidget(this);
     setUpStatusBar();
     setUpSidebar();
@@ -60,7 +63,45 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     // m_registerContainer = new RegisterContainer(this);
     mainLayout->setSpacing(0);
     mainLayout->setContentsMargins(0, 0, 0, 0);
-    splitter->addWidget(m_stackedTabs);
+    // The tabs on top, the pipeline panel below (like VS Code's editor and terminal panel).
+    m_panelSplitter = new QSplitter(Qt::Vertical, this);
+    // A VS Code-style sash: an easy-to-grab strip that lights up blue under the mouse.
+    m_panelSplitter->setHandleWidth(6);
+    m_panelSplitter->setStyleSheet(
+        "QSplitter::handle:vertical { background: transparent; }"
+        "QSplitter::handle:vertical:hover { background: #007fd4; }"
+        "QSplitter::handle:vertical:pressed { background: #007fd4; }");
+    m_panelSplitter->addWidget(m_stackedTabs);
+    m_panelSplitter->addWidget(m_pipelinePanel);
+    m_panelSplitter->setCollapsible(0, false);
+    m_panelSplitter->setCollapsible(1, false);
+    m_panelSplitter->setStretchFactor(0, 1);
+    m_panelSplitter->setStretchFactor(1, 0);
+    m_panelSplitter->setSizes({560, m_panelHeight});
+    connect(m_pipelinePanel, &PipelinePanel::collapseToggled, this,
+            [this](bool collapsed)
+            {
+                const QList<int> sizes = m_panelSplitter->sizes();
+                const int total = sizes.value(0) + sizes.value(1);
+                if (collapsed)
+                {
+                    m_panelHeight = std::max(sizes.value(1), 120);
+                    m_pipelinePanel->setMaximumHeight(36);
+                    m_panelSplitter->setSizes({total - 36, 36});
+                }
+                else
+                {
+                    m_pipelinePanel->setMaximumHeight(QWIDGETSIZE_MAX);
+                    m_panelSplitter->setSizes({total - m_panelHeight, m_panelHeight});
+                }
+            });
+    connect(m_processorManager, &ProcessorManager::pipelineSnapshotSignal, m_pipelinePanel,
+            &PipelinePanel::pushSnapshot);
+    connect(m_processorManager, &ProcessorManager::pipelineResetSignal, m_pipelinePanel,
+            &PipelinePanel::resetPipeline);
+    m_pipelinePanel->resetPipeline(m_processorManager->getProcessorType() != ProcessorType::RVSS);
+
+    splitter->addWidget(m_panelSplitter);
     splitter->addWidget(m_registerContainer);
     splitter->widget(1)->setMaximumWidth(350);
 
@@ -291,7 +332,16 @@ void MainWindow::setUpMenubar()
 {
     QMenu *fileMenu     = menuBar()->addMenu("&File");
     QMenu *settingsMenu = menuBar()->addMenu("&Settings");
+    QMenu *viewMenu     = menuBar()->addMenu("&View");
     QMenu *helpMenu     = menuBar()->addMenu("&Help");
+
+    QAction *pipelinePanelAction = new QAction("Pipeline Panel", this);
+    pipelinePanelAction->setCheckable(true);
+    pipelinePanelAction->setChecked(true);
+    pipelinePanelAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft)); // Ctrl+` as in VS Code
+    viewMenu->addAction(pipelinePanelAction);
+    connect(pipelinePanelAction, &QAction::toggled, this,
+            [this](bool visible) { m_pipelinePanel->setVisible(visible); });
 
     QMenu *preferencesMenu = new QMenu("Preferences", this);
     QMenu *processorMenu   = new QMenu("Processor", this);
@@ -417,13 +467,26 @@ void MainWindow::setUpTabs()
             dynamic_cast<ProcessorTab *>(m_tabs[TabIndex::ProcessorTabIndex]),
             &ProcessorTab::onVMChanged);
 
-    m_stackedTabs->addWidget(m_tabs[TabIndex::EditorTabIndex]);
-    m_stackedTabs->addWidget(m_tabs[TabIndex::MemoryTabIndex]);
-    m_stackedTabs->addWidget(m_tabs[TabIndex::ProcessorTabIndex]);
-    m_stackedTabs->addWidget(m_tabs[TabIndex::CacheTabIndex]);
-    m_stackedTabs->addWidget(m_tabs[TabIndex::CompilerTabIndex]);
-    m_stackedTabs->addWidget(m_tabs[TabIndex::ProfilerTabIndex]);
-    m_stackedTabs->addWidget(m_tabs[TabIndex::VectorTabIndex]);
+    // Each tab sits in a frameless scroll area: a tab taller than the space left by the pipeline
+    // panel (the Cache tab needs ~770 px) scrolls instead of pinning the panel divider.
+    const auto addTab = [this](QWidget *tab)
+    {
+        auto *scroll = new QScrollArea(m_stackedTabs);
+        scroll->setWidget(tab);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->viewport()->setAutoFillBackground(false);
+        m_stackedTabs->addWidget(scroll);
+    };
+    addTab(m_tabs[TabIndex::EditorTabIndex]);
+    addTab(m_tabs[TabIndex::MemoryTabIndex]);
+    addTab(m_tabs[TabIndex::ProcessorTabIndex]);
+    addTab(m_tabs[TabIndex::CacheTabIndex]);
+    addTab(m_tabs[TabIndex::CompilerTabIndex]);
+    addTab(m_tabs[TabIndex::ProfilerTabIndex]);
+    addTab(m_tabs[TabIndex::VectorTabIndex]);
+    m_stackedTabs->setMinimumHeight(120);
 }
 
 bool MainWindow::tryParseAndLoadProgram()

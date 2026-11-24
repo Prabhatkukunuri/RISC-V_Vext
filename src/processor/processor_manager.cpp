@@ -9,6 +9,10 @@
  */
 
 #include "processor/processor_factory.h"
+#include "common/instructions.h"
+#include "processor/processor_constants.h"
+#include "processor/vector/vector_execute.h"
+#include <sstream>
 #include "processor/rv5s/rv5s_processor_h_f.h"
 #include "processor/rv5s/rv5s_processor_h_nf.h"
 #include "processor/rv5s/rv5s_processor_nh_f.h"
@@ -45,8 +49,29 @@ ProcessorManager::ProcessorManager(QObject *parent, ProcessorType vmType) : QObj
     connect(m_currentProcessor.get(), &ProcessorBase::processorClockedSignal, this,
             &ProcessorManager::processorClockedSignal, Qt::DirectConnection);
 
-    connect(this, &ProcessorManager::processorClockedSignal,&m_profiler, 
+    connect(this, &ProcessorManager::processorClockedSignal,&m_profiler,
             &Profiler::processorClockedSlot, Qt::DirectConnection);
+    qRegisterMetaType<Kites::PipelineSnapshot>("Kites::PipelineSnapshot");
+}
+
+void ProcessorManager::programChanged()
+{
+    m_instructionTexts.clear();
+    const auto &code = m_currentProgram.intermediate_code;
+    const auto &words = m_currentProgram.text_buffer;
+    for (size_t i = 0; i < code.size(); ++i)
+    {
+        // Vector instructions print from their encoding (see DumpDisasssembly).
+        if (i < words.size() && rvv::IsVectorInstruction(words[i]))
+        {
+            m_instructionTexts.push_back(instruction_set::disassemble(words[i]));
+            continue;
+        }
+        std::ostringstream text;
+        text << code[i].first;
+        m_instructionTexts.push_back(text.str());
+    }
+    emit pipelineResetSignal(m_currentProcessorType != ProcessorType::RVSS);
 }
 
 void ProcessorManager::changeProcessor(ProcessorType vmType)
@@ -63,6 +88,7 @@ void ProcessorManager::changeProcessor(ProcessorType vmType)
     connect(m_currentProcessor.get(), &ProcessorBase::processorClockedSignal, this,
             &ProcessorManager::processorClockedSignal, Qt::DirectConnection);
     // create new connections for the new VM
+    emit pipelineResetSignal(m_currentProcessorType != ProcessorType::RVSS);
 }
 
 void ProcessorManager::loadProgram(const AssembledProgram &program)
@@ -71,6 +97,7 @@ void ProcessorManager::loadProgram(const AssembledProgram &program)
     m_currentProcessor->LoadProgram(program);
     m_profiler.setInstructionToLineMapping(program);
     m_profiler.setLineNumberToInstructionTypeMapping(program);
+    programChanged();
     updateEditorHighlight({0});
 }
 
@@ -81,6 +108,7 @@ void ProcessorManager::loadProgram(const std::string &sourceText)
     out.close();
     m_currentProgram = assemble(globals::temporary_assembly_file_path.string());
     m_currentProcessor->LoadProgram(m_currentProgram);
+    programChanged();
     DumpDisasssembly(globals::disassembly_file_path, m_currentProgram);
     std::ifstream in(globals::disassembly_file_path);
     std::stringstream buffer;
@@ -101,6 +129,23 @@ void ProcessorManager::processorClockedSlot(const ProcessorState &processorState
     //first we get all the necesary info from the prcossor and then update the related
     //gui widgets
     updateEditorHighlight(processorState.programCounters);
+
+    // Pipeline view: programCounters is {PC, IF/ID, ID/EX, EX/MEM, MEM/WB} on the 5-stage VMs.
+    if (m_currentProcessorType != ProcessorType::RVSS && processorState.programCounters.size() == 5)
+    {
+        PipelineSnapshot snapshot;
+        snapshot.cycle = m_currentProcessor->cycle_s_;
+        for (size_t i = 0; i < 4; ++i)
+        {
+            const uint64_t pc = processorState.programCounters[i + 1];
+            snapshot.pcs[i] = pc;
+            if (pc != INVALID_PC && pc / 4 < m_instructionTexts.size())
+            {
+                snapshot.texts[i] = m_instructionTexts[pc / 4];
+            }
+        }
+        emit pipelineSnapshotSignal(snapshot);
+    }
 
 }
 
@@ -269,6 +314,7 @@ Kites::CircuitScene *ProcessorManager::getCircuitScene() const
 void ProcessorManager::reset()
 {
     m_currentProcessor->Reset();
+    emit pipelineResetSignal(m_currentProcessorType != ProcessorType::RVSS);
 }
 
 ProcessorType ProcessorManager::getProcessorType()

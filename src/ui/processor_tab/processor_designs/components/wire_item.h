@@ -25,6 +25,8 @@ class WireItem : public QGraphicsPathItem
     void addArrowHead(const QPolygonF &arroHead);
     void saveArrowHead();
     void setActive(bool isActive);
+    /// Active, drawn in the vector colour (green): a vector instruction is using this wire.
+    void setVectorActive();
     QJsonObject toJson();
 
   private:
@@ -34,6 +36,7 @@ class WireItem : public QGraphicsPathItem
     QPolygonF m_currentArrowHead;
 
     QPen m_activePen;
+    QPen m_vectorActivePen;
     QPen m_inactivePen;
 };
 } // namespace Kites
