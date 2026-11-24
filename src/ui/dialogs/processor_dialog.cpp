@@ -28,19 +28,19 @@ void ProcessorDialog::on_buttonBox_accepted()
         {
             emit vmSelected(ProcessorType::RVSS);
         }
-        else if (processorType == "5 statge Processor w/o hazard detection w/o forwarding")
+        else if (processorType == "5 stage Processor w/o hazard detection w/o forwarding")
         {
             emit vmSelected(ProcessorType::RV5Stage_NH_NF);
         }
-        else if (processorType == "5 statge Processor w/ hazard detection w/o forwarding")
+        else if (processorType == "5 stage Processor w/ hazard detection w/o forwarding")
         {
             emit vmSelected(ProcessorType::RV5Stage_H_NF);
         }
-        else if (processorType == "5 statge Processor w/o hazard detection w/ forwarding")
+        else if (processorType == "5 stage Processor w/o hazard detection w/ forwarding")
         {
             emit vmSelected(ProcessorType::RV5Stage_NH_F);
         }
-        else if (processorType == "5 statge Processor w/ hazard detection w/ forwarding")
+        else if (processorType == "5 stage Processor w/ hazard detection w/ forwarding")
         {
             emit vmSelected(ProcessorType::RV5Stage_H_F);
         }
