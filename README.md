@@ -1,11 +1,19 @@
 # KITES : RISC - V SIMULATOR
 
-Kites a is RISC V simulator and assembly code editor built for RISC V ISA.
-Kites support I,M,D and F extenstion in single cyle mod and I,M extension in 5 Stage pipelining mode.(D,F will be added in future releases).
+Kites is a RISC-V simulator and assembly code editor. It runs programs on a single-cycle processor and on four
+5-stage pipelines (with or without hazard detection, with or without forwarding), and supports the I, M, F, D and
+V extensions on all of them.
 
 This fork adds the **RISC-V Vector extension (RVV 1.0)**, following the
-[RVV 1.0 specification](https://github.com/riscvarchive/riscv-v-spec/blob/master/v-spec.adoc),
-on the single-cycle VM and all four 5-stage pipeline variants.
+[RVV 1.0 specification](https://github.com/riscvarchive/riscv-v-spec/blob/master/v-spec.adoc).
+Vector instructions run on the single-cycle VM and on all four 5-stage pipeline variants, but only one
+pipeline executes them in five stages:
+
+| VM | How a vector instruction executes |
+|---|---|
+| Single cycle (RVSS) | the whole instruction in one cycle |
+| 5-stage, hazard detection + forwarding (H_F) | **pipelined over IF/ID/EX/MEM/WB**: the result is computed in EX, vector loads/stores access memory in MEM, and vector registers and `vl`/`vtype` are written in WB. A vector forwarding path (EX/MEM → EX) and a vector hazard detection unit (`hdu_vector`) handle dependencies. |
+| 5-stage, the other three variants (H_NF, NH_F, NH_NF) | the single-cycle vector unit, called in EX: the instruction's arithmetic, memory accesses and register writes all happen in the EX stage, and nothing vector-related passes through MEM or WB |
 
 ## Vector extension (RVV 1.0)
 
@@ -25,10 +33,10 @@ on the single-cycle VM and all four 5-stage pipeline variants.
 | Multiply/divide | `vmul`, `vmulh(u/su)`, `vdiv(u)`, `vrem(u)`, widening `vwmul(u/su)` |
 | Multiply-add | `vmacc`, `vnmsac`, `vmadd`, `vnmsub`, widening `vwmacc(u/su/us)` |
 | Merge/move | `vmerge`, `vmv.v.v` / `.v.x` / `.v.i` |
-| Permutation (section 16) | `vmv.x.s`, `vmv.s.x`, `vslideup`, `vslidedown`, `vslide1up`, `vslide1down`, `vrgather` (`.vv` / `.vx` / `.vi`), `vrgatherei16.vv`, `vcompress.vm`, `vmv1r.v` / `vmv2r.v` / `vmv4r.v` / `vmv8r.v` |
-| Reductions (section 14) | `vredsum`, `vredand`, `vredor`, `vredxor`, `vredmin(u)`, `vredmax(u)`, widening `vwredsum(u)` |
-| Mask instructions (section 15) | `vmand` / `vmnand` / `vmandn` / `vmor` / `vmnor` / `vmorn` / `vmxor` / `vmxnor`, `vcpop.m`, `vfirst.m`, `vmsbf.m`, `vmsif.m`, `vmsof.m`, `viota.m`, `vid.v` |
-| Loads and stores | the complete set from spec section 7 (316 mnemonics), listed below |
+| Permutation | `vmv.x.s`, `vmv.s.x`, `vslideup`, `vslidedown`, `vslide1up`, `vslide1down`, `vrgather` (`.vv` / `.vx` / `.vi`), `vrgatherei16.vv`, `vcompress.vm`, `vmv1r.v` / `vmv2r.v` / `vmv4r.v` / `vmv8r.v` |
+| Reductions | `vredsum`, `vredand`, `vredor`, `vredxor`, `vredmin(u)`, `vredmax(u)`, widening `vwredsum(u)` |
+| Mask instructions | `vmand` / `vmnand` / `vmandn` / `vmor` / `vmnor` / `vmorn` / `vmxor` / `vmxnor`, `vcpop.m`, `vfirst.m`, `vmsbf.m`, `vmsif.m`, `vmsof.m`, `viota.m`, `vid.v` |
+| Loads and stores | listed below |
 
 Loads and stores cover every addressing mode:
 
@@ -49,112 +57,104 @@ Common behaviour:
 - **Undo/redo:** works for vector registers, vector CSRs and memory written by vector stores.
 - **Misaligned elements** (spec section 8) are transferred, the same way scalar misaligned loads and stores are.
 
-### Vector tab
+## Bicameral Cache
 
-The **Vector** entry at the bottom of the sidebar shows the vector state while a program runs:
+The L1 data cache can be replaced by the Bicameral Cache, after *The Bicameral Cache: a split cache for vector
+architectures* (arXiv 2407.15440). The L1 is split into two halves of equal size:
 
-- **CSR strip:** VLEN, the decoded `vtype` (e.g. `e32, m2, tu, mu`), `vl`, VLMAX and `vstart`.
-- **Register grid:** `v0`–`v31`, one column per element (element 0 first). The element width follows the current SEW or can be fixed to `e8`–`e64`. Values can be shown in hex, unsigned, signed or binary.
-- **Elements changed by the last vector instruction** are highlighted.
-- **Tail elements** (index ≥ `vl`) are dimmed.
-- **LMUL register groups** are shaded alternately.
-- **Hovering over `v0`** shows it as a mask.
+| Half | Organisation | Used by |
+|---|---|---|
+| Scalar Cache | set associative, block = one sector | scalar loads and stores |
+| Vector Cache | fully associative; each line holds several sectors | vector loads and stores |
 
-The editor highlights and autocompletes the vector mnemonics, `v0`–`v31` and `v0.t`.
+A vector access whose sector is in the Scalar Cache moves it to the Vector Cache; a scalar access whose sector is
+in the Vector Cache is served there. A sector is never in both halves. Both halves use LRU replacement and
+are write-back (the GUI can switch them to write-through).
 
-The **Memory** tab highlights the bytes written by the latest store (scalar or vector). **Go to .data** jumps to the
-start of the data section, **Go to last write** to the latest store, and the rows can be listed in ascending or
-descending address order.
+- **GUI:** Cache tab → **Bicameral L1**: tick **Enable**, choose the L1 size, sector size, sectors per Vector Cache
+  line and Scalar Cache associativity, and press **Apply**. The page shows both halves and their statistics.
+- **CLI:** `--bicameral` uses an 8 KB L1 (Scalar Cache 16 indices × 4 ways × 64 B, Vector Cache 4 lines × 16
+  sectors × 64 B); `--stats` prints its hit, miss, migration and write-back counts.
 
-### Running a program step by step
-
-**Run** executes the program at the speed set in the box next to it (milliseconds per instruction). **Pause** stops
-it; while paused, **Step** executes one instruction, **Undo** / **Redo** move back and forward, and **Resume**
-continues the run. The editor highlights the current line throughout.
-
-### Example
-
-```asm
-.data
-nums:   .word 10, 20, 30, 40, 50, 60, 70, 80     # 0x10000000
-
-.text
-    lui      a0, 0x10000          # a0 = &nums (.data starts at 0x10000000)
-    vsetivli t0, 4, e32, m1, ta, ma
-    vle32.v  v1, (a0)             # v1 = [10, 20, 30, 40]
-    addi     t1, a0, 16
-    vle32.v  v2, (t1)             # v2 = [50, 60, 70, 80]
-    vadd.vv  v3, v1, v2           # v3 = [60, 80, 100, 120]
-    li       t2, 8
-    vlse32.v v4, (a0), t2         # every other word: v4 = [10, 30, 50, 70]
-```
-
-A longer example covering every kind of load and store, with the expected result written next to each
-instruction, is in [`examples/vector_demo.s`](examples/vector_demo.s).
-[`examples/vector_gui_walkthrough.s`](examples/vector_gui_walkthrough.s) is meant for the GUI: it covers loads,
-compares, widening/narrowing, permutations and stores, also with the expected results written next to each line.
-
-### Checking results in the dump files
-
-Kites writes its state to a `vm_state/` folder inside the directory it is started from:
-
-| File | Contents |
-|---|---|
-| `registers_dump.json` | all registers; vector registers are under `"vec_registers"` |
-| `memory_dump.json` | memory rows requested with `kites-cli --mem-dump <hex_addr> <rows>` |
-| `errors_dump.json` | assembler errors (line and message) |
-| `disassembly.txt` | the assembled program |
-
-Each vector register is printed as one hex number with the most significant byte first, so element 0 is in the
-**rightmost** digits. For example, after the program above,
-`"v1" : "0x000000280000001e000000140000000a"` read in 8-digit (e32) groups from the right is `[10, 20, 30, 40]`.
-
-For example, to run the demo and dump 38 rows of memory from the start of `.data`:
-
-```bash
-kites-cli examples/vector_demo.s --mem-dump 0x10000000 38
-```
-
-## Downloading and Installation
-
-Prebuilt libraries are available for Linux,Windows on [Release Page](https://github.com/hghit-harshit/Kites/releases)
-
-### Ubuntu(for only ubuntu-22.04 and above)
-- Run chmod +x for the Kites AppImage.
-- Run the file.
-
-### Windows
-- All the required files are inside the zip file, so you can just run the file.
-- In case you get popup regarding some missing dll please contact us.
-
-## MacOS
-- Put Kites in the application 
-
-RUN
-
-```bash
-sudo xattr -rd com.apple.quarantine sudo xattr -rd com.apple.quarantine /path/to/application.app
-
-```
+[docs/EXAMPLES.md](docs/EXAMPLES.md) walks through two example programs, and [docs/CLI.md](docs/CLI.md#bicameral-cache---bicameral)
+has the details.
 
 ## Building
 
-To build Kites you will first neet to install Qt(version above 6.9)
-Then simply build using
+Kites needs Qt 6.9 or newer and a GCC or Clang compiler (MSVC does not support the `__int128` the ALU uses).
+The GUI and the headless `kites-cli` + tests (`-DDISABLE_GUI=ON -DENABLE_TESTS=ON`) must be separate builds:
+`kites-cli` crashes at start-up if built with the GUI enabled.
 
-```bash
-cmake -DCMAKE_PREFIX_PATH="path/to/Qt/6.x.x/<compiler>" ..
-```
+### macOS with Homebrew
 
-Kites needs a GCC or Clang compiler (the ALU uses `__int128`, which MSVC does not support).
+1. Install the toolchain (Apple Clang comes with the Xcode command line tools; Homebrew's Qt is newer than
+   the 6.9.2 that `CMakeLists.txt` asks for):
 
-There are two configurations. They have to be separate builds because `kites-cli` crashes at start-up if it is built
-with the GUI enabled:
+   ```bash
+   xcode-select --install
+   brew install qt cmake ninja
+   ```
 
-| Build | Options | Produces |
-|---|---|---|
-| GUI | (defaults) | `Kites`: the simulator window |
-| Headless | `-DDISABLE_GUI=ON -DENABLE_TESTS=ON` | `kites-cli` and the test binary `kites_test` |
+2. Build from the repository root. On an Intel Mac, Homebrew lives in `/usr/local`, so use
+   `-DCMAKE_PREFIX_PATH=/usr/local` instead.
+
+   ```bash
+   # GUI
+   cmake -S . -B build-gui -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/homebrew
+   cmake --build build-gui --target Kites
+
+   # Headless CLI and tests
+   cmake -S . -B build -G Ninja -DDISABLE_GUI=ON -DENABLE_TESTS=ON -DCMAKE_PREFIX_PATH=/opt/homebrew
+   cmake --build build --target kites_cli kites_test
+   ```
+
+3. Run:
+
+   ```bash
+   open build-gui/Kites.app
+   ./build/kites-cli examples/vector_add.s --vm rv5-h-f --stats --mem-dump 10000050 5
+   ./build/test/kites_test --gtest_brief=1
+   ```
+
+   On macOS, `kites-cli` writes its dumps to `~/Library/Application Support/Kites/vm_state/`.
+
+### Linux
+
+1. Install a compiler, CMake, Ninja and Qt 6 (on Ubuntu/Debian):
+
+   ```bash
+   sudo apt install build-essential cmake ninja-build qt6-base-dev
+   ```
+
+2. Build from the repository root. `QT_NO_PACKAGE_VERSION_CHECK` lets CMake accept a distribution Qt
+   older than the 6.9.2 that `CMakeLists.txt` asks for.
+
+   ```bash
+   # GUI
+   cmake -S . -B build/gui -G Ninja -DCMAKE_BUILD_TYPE=Release -DQT_NO_PACKAGE_VERSION_CHECK=TRUE
+   cmake --build build/gui --target Kites
+
+   # Headless CLI
+   cmake -S . -B build/cli -G Ninja -DCMAKE_BUILD_TYPE=Release -DDISABLE_GUI=ON -DQT_NO_PACKAGE_VERSION_CHECK=TRUE
+   cmake --build build/cli --target kites_cli
+   ```
+
+3. Optionally, install both on your `PATH` (`~/.local/bin`):
+
+   ```bash
+   mkdir -p ~/.local/bin
+   cp build/gui/Kites ~/.local/bin/Kites-vext
+   cp build/cli/kites-cli ~/.local/bin/kites-cli-vext
+   ```
+
+4. Run:
+
+   ```bash
+   Kites-vext &
+   kites-cli-vext examples/vector_add.s --vm rv5-h-f --stats
+   ```
+
+   On Linux, `kites-cli` writes its dumps to `./vm_state/` in the current directory.
 
 ### Windows with MSYS2
 
@@ -187,11 +187,16 @@ with the GUI enabled:
 
    ```bash
    build/mingw-gui/Kites.exe &
-   build/mingw-test/kites-cli.exe examples/vector_demo.s
+   build/mingw-test/kites-cli.exe examples/vector_add.s
    build/mingw-test/kites_test.exe --gtest_brief=1
    ```
 
    Close the simulator before rebuilding it; Windows locks a running `.exe`.
+
+## Examples
+
+See [docs/EXAMPLES.md](docs/EXAMPLES.md) for example programs that show the pipeline (stalls, forwarding and
+flushes, for scalar and vector instructions) and the Bicameral Cache in the GUI.
 
 ## Testing
 
@@ -204,51 +209,33 @@ The vector extension has two suites, sharing `test/vector_test_helpers.h`:
 | `test/vector_rvss_tests.cpp` | the single-cycle VM: register file, CSRs and VLEN; `vset*`; every integer instruction group (arithmetic, widening/extension/logical, shifts, compares, multiply/divide, carry, permutation, reductions, masks); all loads and stores; the staged EX/MEM/WB split; spec-rule sweeps; encodings; edge-value sweeps; the spec's code examples; masking/tail/vl corner cases |
 | `test/vector_rv5s_tests.cpp` | the 5-stage pipelines: each instruction group on all four variants against RVSS, scalar/vector dependencies, the pipelined vector unit of H_F (forwarding, `hdu_vector`, CSR writes in WB, datapath view), edge-value sweeps and spec examples on H_F/H_NF, and random dependent programs against RVSS |
 
-Encodings are checked against LLVM (`llvm-mc`) and the official `riscv-opcodes` tables. The edge-value sweeps use the
-integer operand pairs of [riscv-vector-tests](https://github.com/chipsalliance/riscv-vector-tests) (Apache-2.0) with
-expected values from an independent reference model; floating-point and fixed-point instructions are not covered. The
-full suite has 867 tests, all passing.
+The full suite has 867 tests.
 
 ## CLI
 
-See [docs/CLI.md](docs/CLI.md) for how to build and use the headless command-line executable. Options added for
-the vector work:
+`kites-cli` assembles a program and runs it without the GUI, writing the registers, disassembly, errors and any
+requested memory to `vm_state/` (on macOS, `~/Library/Application Support/Kites/vm_state/`). See
+[docs/CLI.md](docs/CLI.md) for details.
+
+```bash
+kites-cli <file.s> [--vm <name>] [--mem-dump <hex_addr> <rows>]... [--vlen <bits>] [--stats] [--bicameral]
+kites-cli [--repl | -i]
+```
 
 | Option | Effect |
 |---|---|
-| `--vm rvss\|rv5-nh-nf\|rv5-h-nf\|rv5-nh-f\|rv5-h-f` | pick the VM; all five now run to completion in batch mode |
+| `--vm rvss\|rv5-nh-nf\|rv5-h-nf\|rv5-nh-f\|rv5-h-f` | pick the VM (default `rvss`); all five run to completion in batch mode |
+| `--mem-dump <hex_addr> <rows>` | dump `<rows>` 8-byte rows of memory from `<hex_addr>` after the run; repeatable |
 | `--vlen <bits>` | vector register length (default 128) |
 | `--stats` | print run statistics and write `vm_state/stats_dump.json`: cycles, instructions retired, and on `rvss` the instruction mix, bytes moved and vector elements processed |
-
-## Scalar vs. vector benchmarks
-
-`benchmarks/` compares five common operations, each written in assembly twice: as a plain scalar RV64IM loop and
-as an RVV vector loop. Both versions read the same data, and each run is checked for the exact expected output.
-Speedup is measured in assembly instructions executed (scalar / vector, on the single-cycle VM, VLEN = 128):
-
-| Operation | Scalar | Vector | Speedup |
-|---|---:|---:|---:|
-| Vector add (256 elements) | 2,311 | 95 | 24.3x |
-| AXPY, out = 3x + y (256 elements) | 2,568 | 96 | 26.8x |
-| Dot product (256 elements) | 2,057 | 91 | 22.6x |
-| Array maximum (256 elements) | 1,289 | 66 | 19.5x |
-| Matrix multiply (16x16) | 35,640 | 1,945 | 18.3x |
-
-```bash
-python benchmarks/run_benchmarks.py          # finds build/*/kites-cli; needs matplotlib for the chart
-```
-
-The programs in `benchmarks/programs/` are hand-written and commented (C equivalent, register map, instruction-count
-derivation and expected result in each header); they also open in the GUI. The script checks every result and writes
-`benchmarks/results/` (RESULTS.md, summary.csv, results.json, speedup.png). The metrics and their analysis are in
-[benchmarks/REPORT.md](benchmarks/REPORT.md).
+| `--bicameral` | use the [Bicameral Cache](#bicameral-cache) as the L1 data cache |
+| `--repl`, `-i` | open the interactive REPL instead of running a file |
 
 ## Known limitations
 
 - **Not implemented yet:** fixed-point (saturating, averaging, `vsmul`, scaling shifts, `vnclip`) and all vector
   floating-point instructions, including the floating-point permutations `vfmv.f.s`, `vfmv.s.f`,
   `vfslide1up.vf` and `vfslide1down.vf`.
-- **CSR instructions:** not executed by the pipelined VMs.
 - **Cache tab:** typing a very large set count into the cache configuration can crash the GUI.
 - **No `csrr` pseudo-instruction:** read CSRs with `csrrs rd, vl, x0`.
 - **Register names:** `v0`–`v31` cannot be used as label names.
