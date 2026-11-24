@@ -10,7 +10,10 @@
 #include "ui/pipeline_panel/pipeline_trace.h"
 
 #include <QAbstractScrollArea>
+#include <QColor>
 #include <QWidget>
+
+#include <array>
 
 class QLabel;
 class QTimer;
@@ -18,6 +21,20 @@ class QToolButton;
 
 namespace Kites
 {
+/// Colours of the panel, taken from the active UI theme.
+struct PipelineColors
+{
+    QColor background{"#181818"};
+    QColor headerRow{"#1f1f1f"};
+    QColor border{"#2b2b2b"};
+    QColor text{"#cccccc"};
+    QColor dim{"#6e7681"};
+    QColor currentColumn{"#2a2d2e"};
+    QColor accent{"#007fd4"};
+    /// Indexed by PipeStage: None, IF, ID, EX, MEM, WB.
+    std::array<QColor, 6> stages{};
+};
+
 /// The diagram body: paints only the visible part, so long runs stay cheap.
 class PipelineDiagramView : public QAbstractScrollArea
 {
@@ -29,6 +46,7 @@ class PipelineDiagramView : public QAbstractScrollArea
     /// cycle.
     void refresh();
     void setMessage(const QString &message);
+    void setColors(const PipelineColors &colors);
 
   protected:
     void paintEvent(QPaintEvent *event) override;
@@ -36,6 +54,7 @@ class PipelineDiagramView : public QAbstractScrollArea
 
   private:
     const PipelineTrace &m_trace;
+    PipelineColors m_colors;
     QString m_message;
     int m_charWidth = 8;
     int m_rowHeight = 18;
@@ -75,5 +94,7 @@ class PipelinePanel : public QWidget
 
     void scheduleRefresh();
     void refreshNow();
+    /// Re-colours the panel from the active UI theme.
+    void applyTheme();
 };
 } // namespace Kites

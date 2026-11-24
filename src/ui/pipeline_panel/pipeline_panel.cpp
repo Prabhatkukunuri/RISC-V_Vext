@@ -4,6 +4,8 @@
  */
 #include "ui/pipeline_panel/pipeline_panel.h"
 
+#include "ui/theme/theme_manager.h"
+
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -19,34 +21,66 @@ namespace Kites
 {
 namespace
 {
-// VS Code Dark+ panel and terminal colours.
-const QColor kBackground("#181818");
-const QColor kHeaderRow("#1f1f1f");
-const QColor kBorder("#2b2b2b");
-const QColor kText("#cccccc");
-const QColor kDim("#6e7681");
-const QColor kCurrentColumn("#2a2d2e");
-
 constexpr int kLabelChars = 30; // instruction column
 constexpr int kCellChars = 5;   // "MEM" plus padding
 
-QColor StageColor(PipeStage stage)
+QColor Blend(const QColor &from, const QColor &to, double amount)
 {
-    switch (stage) // the terminal's bright ANSI colours
+    return QColor::fromRgbF(from.redF() + (to.redF() - from.redF()) * amount,
+                            from.greenF() + (to.greenF() - from.greenF()) * amount,
+                            from.blueF() + (to.blueF() - from.blueF()) * amount);
+}
+
+/// The panel's colours for the active UI theme. The stage colours are the terminal's ANSI
+/// colours, in VS Code's dark or light variant to match the theme's appearance.
+PipelineColors ColorsFromTheme()
+{
+    const ThemeManager &themes = ThemeManager::getInstance();
+    ThemeData theme;
+    bool found = false;
+    for (const ThemeData &candidate : themes.availableThemes())
     {
-    case PipeStage::IF:
-        return QColor("#3b8eea");
-    case PipeStage::ID:
-        return QColor("#29b8db");
-    case PipeStage::EX:
-        return QColor("#e5e510");
-    case PipeStage::MEM:
-        return QColor("#d670d6");
-    case PipeStage::WB:
-        return QColor("#23d18b");
-    default:
-        return kText;
+        if (candidate.id == themes.currentThemeId())
+        {
+            theme = candidate;
+            found = true;
+            break;
+        }
     }
+
+    PipelineColors colors;
+    const bool dark = !found || theme.appearance == ThemeAppearance::Dark;
+    if (found)
+    {
+        colors.background = theme.palette.color(QPalette::Window);
+        colors.headerRow = theme.surfaceColor;
+        colors.text = theme.textColor.isValid() ? theme.textColor
+                                                : theme.palette.color(QPalette::Text);
+        colors.dim = theme.mutedForegroundColor;
+        colors.currentColumn = theme.currentLineColor;
+        colors.accent = theme.palette.color(QPalette::Link);
+    }
+    if (colors.headerRow == colors.background) // keep the cycle header visible as a strip
+    {
+        colors.headerRow = Blend(colors.background, colors.text, 0.04);
+    }
+    if (colors.currentColumn == colors.background)
+    {
+        colors.currentColumn = Blend(colors.background, colors.text, 0.08);
+    }
+    colors.border = Blend(colors.background, colors.text, 0.14);
+
+    if (dark)
+    {
+        colors.stages = {colors.text, QColor("#3b8eea"), QColor("#29b8db"), QColor("#e5e510"),
+                         QColor("#d670d6"), QColor("#23d18b")};
+    }
+    else
+    {
+        colors.stages = {colors.text, QColor("#0451a5"), QColor("#0598bc"), QColor("#949800"),
+                         QColor("#bc05bc"), QColor("#00a000")};
+    }
+    return colors;
 }
 
 QFont TerminalFont()
@@ -67,14 +101,7 @@ PipelineDiagramView::PipelineDiagramView(const PipelineTrace &trace, QWidget *pa
     setFrameShape(QFrame::NoFrame);
     viewport()->setAutoFillBackground(false);
     setFont(TerminalFont());
-    setStyleSheet(
-        "QScrollBar:vertical { background: #181818; width: 10px; margin: 0; }"
-        "QScrollBar:horizontal { background: #181818; height: 10px; margin: 0; }"
-        "QScrollBar::handle { background: rgba(121,121,121,0.4); min-height: 20px; "
-        "min-width: 20px; }"
-        "QScrollBar::handle:hover { background: rgba(100,100,100,0.7); }"
-        "QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }"
-        "QScrollBar::add-page, QScrollBar::sub-page { background: none; }");
+    setColors(ColorsFromTheme());
     updateMetrics();
 
     // Scrolling by hand stops following the newest cycle; scrolling back to the end resumes it.
@@ -107,6 +134,24 @@ void PipelineDiagramView::updateMetrics()
     m_cellWidth = m_charWidth * kCellChars;
     // Room for the cycle header and the five stages (plus a stall bubble) at the least.
     setMinimumHeight(m_rowHeight * 7 + horizontalScrollBar()->sizeHint().height());
+}
+
+void PipelineDiagramView::setColors(const PipelineColors &colors)
+{
+    m_colors = colors;
+    const QString handle = colors.dim.name();
+    setStyleSheet(QStringLiteral(
+                      "QScrollBar:vertical { background: %1; width: 10px; margin: 0; }"
+                      "QScrollBar:horizontal { background: %1; height: 10px; margin: 0; }"
+                      "QScrollBar::handle { background: %2; min-height: 20px; min-width: 20px; "
+                      "border-radius: 0; }"
+                      "QScrollBar::handle:hover { background: %3; }"
+                      "QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }"
+                      "QScrollBar::add-page, QScrollBar::sub-page { background: none; }")
+                      .arg(colors.background.name(),
+                           Blend(colors.background, colors.dim, 0.5).name(),
+                           colors.dim.name()));
+    viewport()->update();
 }
 
 void PipelineDiagramView::setMessage(const QString &message)
@@ -167,7 +212,7 @@ void PipelineDiagramView::resizeEvent(QResizeEvent *event)
 void PipelineDiagramView::paintEvent(QPaintEvent *)
 {
     QPainter painter(viewport());
-    painter.fillRect(viewport()->rect(), kBackground);
+    painter.fillRect(viewport()->rect(), m_colors.background);
     painter.setFont(font());
     const QFontMetrics metrics(font());
     const int baseline = (m_rowHeight + metrics.ascent() - metrics.descent()) / 2;
@@ -176,7 +221,7 @@ void PipelineDiagramView::paintEvent(QPaintEvent *)
 
     if (!m_message.isEmpty() || m_trace.LastCycle() == 0)
     {
-        painter.setPen(kDim);
+        painter.setPen(m_colors.dim);
         const QString text = !m_message.isEmpty()
                                  ? m_message
                                  : QStringLiteral("Waiting for the first clock cycle. Step or run a "
@@ -199,7 +244,7 @@ void PipelineDiagramView::paintEvent(QPaintEvent *)
     // The newest cycle's column.
     if (m_trace.LastCycle() >= firstCycle && m_trace.LastCycle() <= lastCycle)
     {
-        painter.fillRect(cellX(m_trace.LastCycle()), 0, m_cellWidth, height, kCurrentColumn);
+        painter.fillRect(cellX(m_trace.LastCycle()), 0, m_cellWidth, height, m_colors.currentColumn);
     }
 
     // Rows
@@ -222,7 +267,7 @@ void PipelineDiagramView::paintEvent(QPaintEvent *)
             label = QString::fromStdString(row.text);
         }
         label = metrics.elidedText(label, Qt::ElideRight, m_labelWidth - 2 * m_charWidth);
-        painter.setPen(row.IsNop() ? kDim : kText);
+        painter.setPen(row.IsNop() ? m_colors.dim : m_colors.text);
         painter.drawText(QPoint(m_charWidth, y + baseline), label);
 
         for (uint64_t cycle = std::max(firstCycle, row.firstCycle);
@@ -234,7 +279,7 @@ void PipelineDiagramView::paintEvent(QPaintEvent *)
             QFont cellFont = font();
             cellFont.setBold(cycle == m_trace.LastCycle());
             painter.setFont(cellFont);
-            painter.setPen(row.IsNop() ? kDim : StageColor(stage));
+            painter.setPen(row.IsNop() ? m_colors.dim : m_colors.stages[static_cast<size_t>(stage)]);
             painter.drawText(QRect(cellX(cycle), y, m_cellWidth, m_rowHeight), Qt::AlignCenter,
                              QString::fromLatin1(PipeStageName(stage)));
             painter.setFont(font());
@@ -242,16 +287,16 @@ void PipelineDiagramView::paintEvent(QPaintEvent *)
     }
 
     // Header row: cycle numbers, over a pinned strip.
-    painter.fillRect(0, 0, width, m_rowHeight, kHeaderRow);
-    painter.setPen(kDim);
+    painter.fillRect(0, 0, width, m_rowHeight, m_colors.headerRow);
+    painter.setPen(m_colors.dim);
     painter.drawText(QPoint(m_charWidth, baseline), QStringLiteral("cycle"));
     for (uint64_t cycle = firstCycle; cycle <= lastCycle; ++cycle)
     {
-        painter.setPen(cycle == m_trace.LastCycle() ? kText : kDim);
+        painter.setPen(cycle == m_trace.LastCycle() ? m_colors.text : m_colors.dim);
         painter.drawText(QRect(cellX(cycle), 0, m_cellWidth, m_rowHeight), Qt::AlignCenter,
                          QString::number(cycle));
     }
-    painter.setPen(kBorder);
+    painter.setPen(m_colors.border);
     painter.drawLine(0, m_rowHeight - 1, width, m_rowHeight - 1);
     painter.drawLine(m_labelWidth - m_charWidth / 2, 0, m_labelWidth - m_charWidth / 2, height);
 }
@@ -262,48 +307,40 @@ PipelinePanel::PipelinePanel(QWidget *parent) : QWidget(parent)
 {
     setObjectName("PipelinePanel");
     setAttribute(Qt::WA_StyledBackground, true);
-    setStyleSheet("#PipelinePanel { background: #181818; border-top: 1px solid #2b2b2b; }");
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
     // Header: a single active tab, VS Code style, plus status and actions on the right.
+    // Colours come from applyTheme().
     auto *header = new QWidget(this);
     header->setObjectName("PipelinePanelHeader");
     header->setAttribute(Qt::WA_StyledBackground, true);
     header->setFixedHeight(35);
-    header->setStyleSheet("#PipelinePanelHeader { background: #181818; }");
     auto *headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(12, 0, 8, 0);
     headerLayout->setSpacing(10);
 
     auto *tab = new QLabel(QStringLiteral("PIPELINE"), header);
-    tab->setStyleSheet("QLabel { color: #e7e7e7; font-size: 11px; letter-spacing: 1px; "
-                       "padding: 8px 2px 6px 2px; border-bottom: 1px solid #e7e7e7; }");
+    tab->setObjectName("PipelinePanelTab");
     headerLayout->addWidget(tab, 0, Qt::AlignBottom);
     headerLayout->addStretch(1);
 
     m_status = new QLabel(header);
-    m_status->setStyleSheet("QLabel { color: #9d9d9d; font-size: 11px; }");
+    m_status->setObjectName("PipelinePanelStatus");
     m_status->setMinimumWidth(170);
     m_status->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     headerLayout->addWidget(m_status);
 
-    const QString buttonStyle =
-        "QToolButton { color: #cccccc; background: transparent; border: none; padding: 2px 6px; "
-        "border-radius: 4px; font-size: 13px; }"
-        "QToolButton:hover { background: rgba(90,93,94,0.31); }";
     auto *clearButton = new QToolButton(header);
     clearButton->setText(QStringLiteral("Clear"));
     clearButton->setToolTip(QStringLiteral("Clear the diagram"));
-    clearButton->setStyleSheet(buttonStyle);
     headerLayout->addWidget(clearButton);
 
     m_collapseButton = new QToolButton(header);
     m_collapseButton->setText(QString::fromUtf8("⌄")); // ⌄
     m_collapseButton->setToolTip(QStringLiteral("Collapse panel"));
-    m_collapseButton->setStyleSheet(buttonStyle);
     headerLayout->addWidget(m_collapseButton);
 
     layout->addWidget(header);
@@ -333,7 +370,31 @@ PipelinePanel::PipelinePanel(QWidget *parent) : QWidget(parent)
                 emit collapseToggled(m_collapsed);
             });
 
+    // Follow the UI theme.
+    connect(&ThemeManager::getInstance(), &ThemeManager::themeChangedSignal, this,
+            [this](const QString &) { applyTheme(); });
+    applyTheme();
+
     refreshNow();
+}
+
+void PipelinePanel::applyTheme()
+{
+    const PipelineColors colors = ColorsFromTheme();
+    const QColor hover = Blend(colors.background, colors.text, 0.12);
+    setStyleSheet(
+        QStringLiteral(
+            "#PipelinePanel { background: %1; border-top: 1px solid %2; }"
+            "#PipelinePanelHeader { background: %1; }"
+            "#PipelinePanelTab { color: %3; font-size: 11px; letter-spacing: 1px; "
+            "padding: 8px 2px 6px 2px; border-bottom: 1px solid %3; }"
+            "#PipelinePanelStatus { color: %4; font-size: 11px; }"
+            "#PipelinePanelHeader QToolButton { color: %3; background: transparent; border: none; "
+            "padding: 2px 6px; border-radius: 4px; font-size: 13px; }"
+            "#PipelinePanelHeader QToolButton:hover { background: %5; }")
+            .arg(colors.background.name(), colors.border.name(), colors.text.name(),
+                 colors.dim.name(), hover.name()));
+    m_view->setColors(colors);
 }
 
 void PipelinePanel::pushSnapshot(const Kites::PipelineSnapshot &snapshot)

@@ -24,6 +24,7 @@
 #include <QSpinBox>
 #include <QWidgetAction>
 #include <QSplitter>
+#include <QApplication>
 #include <QScrollArea>
 #include <QMessageBox>
 
@@ -67,10 +68,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_panelSplitter = new QSplitter(Qt::Vertical, this);
     // A VS Code-style sash: an easy-to-grab strip that lights up blue under the mouse.
     m_panelSplitter->setHandleWidth(6);
-    m_panelSplitter->setStyleSheet(
-        "QSplitter::handle:vertical { background: transparent; }"
-        "QSplitter::handle:vertical:hover { background: #007fd4; }"
-        "QSplitter::handle:vertical:pressed { background: #007fd4; }");
+    const auto styleSash = [this]()
+    {
+        const QString accent = QApplication::palette().color(QPalette::Link).name();
+        m_panelSplitter->setStyleSheet(
+            QStringLiteral("QSplitter::handle:vertical { background: transparent; }"
+                           "QSplitter::handle:vertical:hover { background: %1; }"
+                           "QSplitter::handle:vertical:pressed { background: %1; }")
+                .arg(accent));
+    };
+    styleSash();
+    connect(&ThemeManager::getInstance(), &ThemeManager::themeChangedSignal, this,
+            [styleSash](const QString &) { styleSash(); });
     m_panelSplitter->addWidget(m_stackedTabs);
     m_panelSplitter->addWidget(m_pipelinePanel);
     m_panelSplitter->setCollapsible(0, false);
