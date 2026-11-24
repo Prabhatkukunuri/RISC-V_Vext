@@ -197,25 +197,17 @@ with the GUI enabled:
 
 See [docs/TESTING.md](docs/TESTING.md) for how to build and run tests, including coverage reports.
 
-The vector extension has its own suites:
+The vector extension has two suites, sharing `test/vector_test_helpers.h`:
 
 | File | Covers |
 |---|---|
-| `test/vector_register_file_test.cpp` | register file, CSRs, VLEN configuration |
-| `test/vset_test.cpp` | `vsetvli` / `vsetivli` / `vsetvl` |
-| `test/vector_int_arith_test.cpp` | `vadd` / `vsub` / `vrsub` |
-| `test/vector_widen_ext_logic_test.cpp` | widening, extension and logical instructions |
-| `test/vector_shift_test.cpp`, `test/vector_narrow_shift_test.cpp` | single-width and narrowing shifts |
-| `test/vector_compare_test.cpp` | compares and their aliases |
-| `test/vector_mul_div_test.cpp` | min/max, multiply, divide, multiply-add, merge/move |
-| `test/vector_carry_test.cpp` | add-with-carry / subtract-with-borrow |
-| `test/vector_load_store_test.cpp` | all loads and stores, including misaligned elements |
-| `test/vector_permute_test.cpp` | permutation instructions |
-| `test/vector_reduction_test.cpp`, `test/vector_mask_test.cpp` | reductions and mask instructions |
-| `test/vector_spec_sweep_test.cpp` | spec-wide sweep of the arithmetic instructions |
+| `test/vector_rvss_tests.cpp` | the single-cycle VM: register file, CSRs and VLEN; `vset*`; every integer instruction group (arithmetic, widening/extension/logical, shifts, compares, multiply/divide, carry, permutation, reductions, masks); all loads and stores; the staged EX/MEM/WB split; spec-rule sweeps; encodings; edge-value sweeps; the spec's code examples; masking/tail/vl corner cases |
+| `test/vector_rv5s_tests.cpp` | the 5-stage pipelines: each instruction group on all four variants against RVSS, scalar/vector dependencies, the pipelined vector unit of H_F (forwarding, `hdu_vector`, CSR writes in WB, datapath view), edge-value sweeps and spec examples on H_F/H_NF, and random dependent programs against RVSS |
 
-Encodings are checked against LLVM (`llvm-mc`) and the official `riscv-opcodes` tables, and every program runs on
-all five VMs. The full suite has 332 tests, all passing.
+Encodings are checked against LLVM (`llvm-mc`) and the official `riscv-opcodes` tables. The edge-value sweeps use the
+integer operand pairs of [riscv-vector-tests](https://github.com/chipsalliance/riscv-vector-tests) (Apache-2.0) with
+expected values from an independent reference model; floating-point and fixed-point instructions are not covered. The
+full suite has 867 tests, all passing.
 
 ## CLI
 
