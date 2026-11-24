@@ -156,42 +156,114 @@ The GUI and the headless `kites-cli` + tests (`-DDISABLE_GUI=ON -DENABLE_TESTS=O
 
    On Linux, `kites-cli` writes its dumps to `./vm_state/` in the current directory.
 
-### Windows with MSYS2
+### Windows (MSYS2): build, run and use
 
-1. Install the toolchain from an MSYS2 shell:
+Everything below uses **PowerShell** and the free **MSYS2** toolchain (GCC + Qt 6). MSVC cannot be used,
+because the ALU needs `__int128`.
+
+#### 1. Install the tools (once)
+
+1. Install MSYS2 from <https://www.msys2.org> into the default folder `C:\msys64`.
+2. Open the **MSYS2 UCRT64** shell from the Start menu and install the compiler, Qt, CMake and Ninja:
 
    ```bash
    pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
    ```
 
-2. Build from the repository root, with `C:\msys64\ucrt64\bin` on `PATH`:
+3. Install Git for Windows if you don't have it, and clone the repository:
 
-   ```bash
-   export PATH="/c/msys64/ucrt64/bin:$PATH"
-
-   # GUI
-   cmake -S . -B build/mingw-gui -G Ninja -DCMAKE_BUILD_TYPE=Debug \
-         -DCMAKE_PREFIX_PATH=/c/msys64/ucrt64 -DQT_NO_PACKAGE_VERSION_CHECK=TRUE
-   cmake --build build/mingw-gui --target Kites
-
-   # Headless CLI and tests
-   cmake -S . -B build/mingw-test -G Ninja -DCMAKE_BUILD_TYPE=Debug -DDISABLE_GUI=ON -DENABLE_TESTS=ON \
-         -DCMAKE_PREFIX_PATH=/c/msys64/ucrt64 -DQT_NO_PACKAGE_VERSION_CHECK=TRUE
-   cmake --build build/mingw-test --target kites_cli kites_test
+   ```powershell
+   git clone https://github.com/Prabhatkukunuri/RISC-V_Vext.git
+   cd RISC-V_Vext
    ```
 
-   `QT_NO_PACKAGE_VERSION_CHECK` is needed only when MSYS2's Qt is older than the 6.9.2 that `CMakeLists.txt`
-   asks for; Kites builds and runs with Qt 6.7.
+#### 2. Build (from the repository folder)
 
-3. Run with the same `PATH`, so Windows finds the Qt DLLs:
+Every PowerShell window you use for Kites first needs the MSYS2 tools and DLLs on `PATH`:
 
-   ```bash
-   build/mingw-gui/Kites.exe &
-   build/mingw-test/kites-cli.exe examples/vector_add.s
-   build/mingw-test/kites_test.exe --gtest_brief=1
-   ```
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH
+```
 
-   Close the simulator before rebuilding it; Windows locks a running `.exe`.
+Then configure and build the two variants, the GUI and the command-line tool with the tests. They are separate builds,
+because `kites-cli` built together with the GUI crashes at start-up.
+
+```powershell
+# GUI: build\mingw-gui\Kites.exe
+cmake -S . -B build/mingw-gui -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=C:/msys64/ucrt64 -DQT_NO_PACKAGE_VERSION_CHECK=TRUE
+cmake --build build/mingw-gui --target Kites
+
+# Command line and tests: build\mingw-test\kites-cli.exe, build\mingw-test\kites_test.exe
+cmake -S . -B build/mingw-test -G Ninja -DCMAKE_BUILD_TYPE=Debug -DDISABLE_GUI=ON -DENABLE_TESTS=ON -DCMAKE_PREFIX_PATH=C:/msys64/ucrt64 -DQT_NO_PACKAGE_VERSION_CHECK=TRUE
+cmake --build build/mingw-test --target kites_cli kites_test
+```
+
+The `cmake -S ...` lines are needed only the first time. After pulling new changes, run only the
+`cmake --build ...` lines. `QT_NO_PACKAGE_VERSION_CHECK` lets Kites build with MSYS2's Qt (6.7) although
+`CMakeLists.txt` asks for 6.9.2.
+
+#### 3. Open the simulator
+
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH
+.\build\mingw-gui\Kites.exe
+```
+
+Start it from PowerShell like this rather than by double-clicking `Kites.exe`: the window needs the Qt DLLs from
+`C:\msys64\ucrt64\bin`.
+
+#### 4. Write and run a program
+
+1. **Editor tab:** type or paste a RISC-V program (`.data` and `.text` sections). Saving is not needed: **Run**
+   assembles whatever is in the editor. **File → Open** loads a `.s` file (for example from `examples\`), and
+   **File → Save** saves yours.
+2. **Processor** (toolbar button): choose the processor:
+   - *Single-cycle* (default): one instruction per step, the easiest to follow;
+   - *5 stage Processor w/ hazard detection w/ forwarding*: the pipelined processor that also pipelines vector
+     instructions. The other three 5-stage variants are there to show hazards without detection or forwarding.
+3. Run it:
+
+   | To | Do |
+   |---|---|
+   | run to the end | **Run** (▶) |
+   | watch it slowly | set the delay box next to Run (milliseconds per instruction, e.g. `500`), then **Run** |
+   | go one instruction at a time | **Run**, then **Pause**, then **Step** |
+   | go back / forward | **Undo** / **Redo** (also for vector instructions) |
+
+4. Look at the results:
+   - **Vector tab:** registers `v0`–`v31` and the current `vl`, SEW, LMUL, VLEN and VLMAX;
+   - **Memory tab:** **Go to .data** jumps to the data; bytes just written are highlighted;
+   - **Processor tab:** the datapath of the chosen processor (vector wires light up green on the pipelined one);
+   - **View → Pipeline Panel:** a cycle-by-cycle diagram of the pipeline (IF/ID/EX/MEM/WB, stalls shown as `nop`);
+   - **Cache tab:** cache contents and hit/miss statistics, including the optional *Bicameral L1* page.
+
+#### 5. Command line (no window)
+
+```powershell
+.\build\mingw-test\kites-cli.exe my_program.s --stats --mem-dump 0x10000040 4
+.\build\mingw-test\kites-cli.exe my_program.s --vm rv5-h-f --stats   # on the pipelined processor
+```
+
+`--stats` prints the instruction count and cycles; `--mem-dump <address> <rows>` saves 8-byte rows of memory.
+The registers, memory and errors are written to a `vm_state\` folder in the current folder. Other options:
+`--vm rvss|rv5-nh-nf|rv5-h-nf|rv5-nh-f|rv5-h-f`, `--vlen <bits>`. See [CLI](#cli) and
+[docs/CLI.md](docs/CLI.md).
+
+Run the unit tests with:
+
+```powershell
+.\build\mingw-test\kites_test.exe --gtest_brief=1
+```
+
+#### 6. Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| "…dll was not found" when starting `Kites.exe` | Start it from PowerShell after `$env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH`. |
+| The build fails because `Kites.exe` cannot be written | Close the simulator first; Windows locks a running `.exe`. |
+| After pulling new code, linking fails with `undefined reference to ...staticMetaObject` or `vtable for ...` | Qt's generated code is out of date. Delete `build\mingw-gui\Kites_autogen`, `build\mingw-gui\kites_core_autogen` and `build\mingw-gui\kites_cli_autogen`, then run the `cmake -S ...` and `cmake --build ...` lines for the GUI again. |
+| `cmake` or `g++` is not recognised | The `$env:PATH` line was not run in this PowerShell window. |
+| The program does not assemble | The error message gives the line number. Compare the syntax with the examples in `examples\`. |
 
 ## Examples
 
