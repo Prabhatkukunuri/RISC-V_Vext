@@ -209,8 +209,27 @@ $env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH
 .\build\mingw-gui\Kites.exe
 ```
 
-Start it from PowerShell like this rather than by double-clicking `Kites.exe`: the window needs the Qt DLLs from
-`C:\msys64\ucrt64\bin`.
+`Kites.exe` needs the Qt and MinGW DLLs from `C:\msys64\ucrt64\bin`, which is why the `PATH` line comes first.
+
+**To open it by double-clicking `Kites.exe`**, copy those DLLs next to it once (run from the repository folder):
+
+```powershell
+$msys = "C:\msys64\ucrt64"
+$dst  = ".\build\mingw-gui"
+$dlls = "Qt6Core", "Qt6Gui", "Qt6Network", "Qt6Widgets", "libstdc++-6", "libgcc_s_seh-1", "libwinpthread-1",
+        "libb2-1", "libbrotlicommon", "libbrotlidec", "libbz2-1", "libdouble-conversion", "libfreetype-6",
+        "libglib-2.0-0", "libgraphite2", "libharfbuzz-0", "libiconv-2", "libicudt*", "libicuin*", "libicuuc*",
+        "libintl-8", "libjpeg-8", "libmd4c", "libpcre2-16-0", "libpcre2-8-0", "libpng16-16", "libzstd", "zlib1"
+foreach ($d in $dlls) { Copy-Item "$msys\bin\$d.dll" $dst }
+foreach ($p in "platforms\qwindows", "styles\qmodernwindowsstyle", "imageformats\qgif", "imageformats\qico", "imageformats\qjpeg") {
+    New-Item -ItemType Directory -Force (Join-Path $dst (Split-Path $p)) | Out-Null
+    Copy-Item "$msys\share\qt6\plugins\$p.dll" (Join-Path $dst (Split-Path $p))
+}
+```
+
+After this, double-clicking `build\mingw-gui\Kites.exe` opens the simulator. Rebuilding keeps the copied DLLs; copy them
+again after deleting the `build` folder or updating MSYS2 (`pacman -Syu`). Running the same commands with
+`$dst = ".\build\mingw-test"` lets `kites-cli.exe` and `kites_test.exe` run without the `PATH` line.
 
 #### 4. Write and run a program
 
@@ -259,7 +278,7 @@ Run the unit tests with:
 
 | Problem | Fix |
 |---|---|
-| "…dll was not found" when starting `Kites.exe` | Start it from PowerShell after `$env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH`. |
+| "…dll was not found" when starting `Kites.exe` | Start it from PowerShell after `$env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH`, or copy the DLLs next to it as in step 3. If it happened after updating MSYS2, copy them again. |
 | The build fails because `Kites.exe` cannot be written | Close the simulator first; Windows locks a running `.exe`. |
 | After pulling new code, linking fails with `undefined reference to ...staticMetaObject` or `vtable for ...` | Qt's generated code is out of date. Delete `build\mingw-gui\Kites_autogen`, `build\mingw-gui\kites_core_autogen` and `build\mingw-gui\kites_cli_autogen`, then run the `cmake -S ...` and `cmake --build ...` lines for the GUI again. |
 | `cmake` or `g++` is not recognised | The `$env:PATH` line was not run in this PowerShell window. |
