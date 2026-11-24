@@ -374,13 +374,6 @@ Elements readElements(const RegisterFile &rf, size_t reg, size_t sew, size_t cou
     }
     return values;
 }
-
-void expectIllegal(const std::string &source, const Setup &setup = {})
-{
-    // Must assemble: the error has to come from the run-time check, not the assembler.
-    ASSERT_NO_THROW(assembleSource(source)) << source;
-    EXPECT_THROW(runOn<Kites::RVSSProcessor>(source, setup), std::runtime_error) << source;
-}
 } // namespace
 
 namespace
