@@ -362,17 +362,16 @@ void RV5StageProcessorHF::pipeline_execute()
             // scalar of .vx, or the base address/stride of a vector load/store.
             alu_result = execute_vector(instruction, alu_in1, alu_in2);
         }
-        // temporary fix for lui instruction
 
         // CSR instructions produce their result outside the ALU.
         alu_result = special_execute_result(instruction, alu_result, alu_in1);
 
+        // temporary fix for lui instruction
         if ((id_ex_reg_.instruction & 0b1111111) == 0b0110111) // lui
         {
             alu_result = static_cast<uint64_t>(id_ex_reg_.imm << 12);
         }
-        // auipc: pc + sign-extended (imm << 12). Without this the ALU added two register
-        // values instead, so auipc (and la, which expands to auipc + addi) gave garbage.
+        // auipc value adds the immediate to the current value of PC. This requires it to be done in the execute stage.
         if ((id_ex_reg_.instruction & 0b1111111) == 0b0010111)
         {
             const int32_t upper = static_cast<int32_t>(static_cast<uint32_t>(id_ex_reg_.imm) << 12);
